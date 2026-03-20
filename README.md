@@ -31,18 +31,25 @@
 ---
 
 ## 🛠️ 3. 기술 스택 (Tech Stack)
-- **언어:** Python 3.10+
-- **프레임워크:** FastAPI
-- **AI 프레임워크:** LangChain, OpenAI API (GPT-4o 추천)
-- **데이터베이스:** ChromaDB (Vector DB)
-- **환경 관리:** venv, python-dotenv
+
+| 분류 | 사용 기술 (Stack) | 주요 역할 및 강점 (Description) |
+| :--- | :--- | :--- |
+| **Backend** | Python 3.11+, FastAPI | 비동기 처리로 빠른 API 응답 속도 및 서버 성능 확보 |
+| | Pydantic / SQLAlchemy | 강력한 데이터 타입 검증 및 안정적인 DB 객체 관계 매핑 |
+| **Frontend** | React 18 / JSX | 선언적 UI 설계를 통한 가독성 증대 및 현대적 웹 표준 기반 개발 |
+| | Vite / CSS Modules | 최적화된 빌드 환경 및 독립적 스타일링으로 유지보수 용이 |
+| **AI & LLM** | LangChain / RAG | 공고문 기반 지식 베이스 구축으로 환각 방지 및 분석 자동화 |
+| | GPT-4o, Claude 3.5 | 시나리오 기반 맞춤형 전략 수립 및 고도화된 컨설팅 로직 수행 |
+| **Database** | PostgreSQL | 유저 정보 및 대시보드 데이터의 정교한 관계형 데이터 설계 |
+| | ChromaDB | 법령/판례 데이터 벡터화를 통한 유사도 기반 검색 엔진 |
+| **Etc** | OAuth 2.0 / Selenium | 소셜 로그인 보안 강화 및 실시간 데이터 수집 자동화 |
 
 ---
 
 ## 📂 4. 프로젝트 폴더 구조
 
 ### 🔹 Backend (Python/FastAPI)
-```text
+
 legal-mind-rag/
 ├── app/                        # [애플리케이션 핵심]
 │   ├── api/                    # API 경로 (URL 주소 설정)
@@ -51,8 +58,8 @@ legal-mind-rag/
 │   ├── core/                   # 설정 (OpenAI 키, 보안 설정)
 │   ├── database/               # DB 연결 (Vector DB, RDBMS)
 │   ├── services/               # 비즈니스 로직 (RAG 엔진, 텍스트 분석)
-│   ├── schemas/                # 데이터 규격 (질문은 문자열, 답변은 객체 등)
-│   ├── models/                 # DB 테이블 구조 정의 (필요 시)
+│   ├── schemas/                # 데이터 규격 (Pydantic 모델)
+│   ├── models/                 # DB 테이블 구조 정의 (SQLAlchemy)
 │   └── main.py                 # FastAPI 실행 입구
 ├── data/                       # [데이터 저장소]
 │   ├── raw/                    # 법령/판례 PDF 원본
@@ -60,13 +67,13 @@ legal-mind-rag/
 │   └── vectorstore/            # ChromaDB (벡터 엔진) 데이터 저장소
 ├── docs/                       # [문서화] 기획서, 설계도, API 문서
 ├── tests/                      # [검증] 코드 테스트용 파일들
-├── scripts/                    # [관리] PDF를 DB로 밀어넣는 일회성 실행 스크립트
+├── scripts/                    # [관리] 데이터 파이프라인/전처리 스크립트
 ├── .env                        # [보안] API 키 보관 (수동 생성 필요)
-├── .gitignore                  # [관리] Git에 올리지 않을 파일 목록
-├── requirements.txt            # [설치] 필요한 라이브러리 목록
+├── .gitignore                  # [관리] Git 제외 목록
+├── requirements.txt            # [설치] 의존성 라이브러리 목록
 └── README.md                   # [대문] 프로젝트 소개
 
-🔹 Frontend (React/Tailwind CSS) - 추후 확장 예정
+### 🔹 Frontend (React/Tailwind CSS) - 추후 확장 예정
 
 legal-mind-frontend/
 ├── src/
@@ -78,3 +85,19 @@ legal-mind-frontend/
 │   └── utils/           # 유틸리티 (날짜 변환, 텍스트 가공 등)
 ├── tailwind.config.js   # Tailwind 설정
 └── package.json         # 라이브러리 관리
+
+
+## 📂 5. 문서 바로가기 (Documentation)
+
+*   [01_기획 및 요구사항](docs/01_concept_and_requirements.md)
+*   [02_시스템 아키텍처](docs/02_system_architecture.md)
+*   [03_데이터 설계](docs/03_data_design_spec.md)
+*   [04_프론트엔드 및 UI/UX 설계](docs/04_frontend_plan.md)
+*   [05_트러블슈팅 로그](docs/05_troubleshooting_log.md)
+*   [06_실험 및 평가 보고서 (TBD)](docs/06_evaluation_report.md)
+
+---
+
+## 📈 6. 버전 관리 (Changelog)
+
+*   **v0.1 (2026-03-10):** 프로젝트 초기 기획 및 README/문서 구조 정의.
