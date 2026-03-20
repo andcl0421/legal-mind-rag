@@ -50,41 +50,43 @@
 
 ### 🔹 Backend (Python/FastAPI)
 
+```text
 legal-mind-rag/
 ├── app/                        # [애플리케이션 핵심]
 │   ├── api/                    # API 경로 (URL 주소 설정)
-│   │   └── v1/                 # 버전 관리 (나중에 v2 만들 때 대비)
+│   │   └── v1/                 # 버전 관리
 │   │       └── endpoints/      # 실제 대화/질문 API 로직
 │   ├── core/                   # 설정 (OpenAI 키, 보안 설정)
 │   ├── database/               # DB 연결 (Vector DB, RDBMS)
-│   ├── services/               # 비즈니스 로직 (RAG 엔진, 텍스트 분석)
+│   ├── services/               # 비즈니스 로직 (RAG 엔진)
 │   ├── schemas/                # 데이터 규격 (Pydantic 모델)
 │   ├── models/                 # DB 테이블 구조 정의 (SQLAlchemy)
 │   └── main.py                 # FastAPI 실행 입구
 ├── data/                       # [데이터 저장소]
 │   ├── raw/                    # 법령/판례 PDF 원본
-│   ├── processed/              # AI용 텍스트/JSON 가공 데이터
-│   └── vectorstore/            # ChromaDB (벡터 엔진) 데이터 저장소
+│   ├── processed/              # AI용 가공 데이터
+│   └── vectorstore/            # ChromaDB 데이터 저장소
 ├── docs/                       # [문서화] 기획서, 설계도, API 문서
 ├── tests/                      # [검증] 코드 테스트용 파일들
-├── scripts/                    # [관리] 데이터 파이프라인/전처리 스크립트
-├── .env                        # [보안] API 키 보관 (수동 생성 필요)
+├── scripts/                    # [관리] 데이터 파이프라인 스크립트
+├── .env                        # [보안] API 키 보관
 ├── .gitignore                  # [관리] Git 제외 목록
 ├── requirements.txt            # [설치] 의존성 라이브러리 목록
 └── README.md                   # [대문] 프로젝트 소개
+
 
 ### 🔹 Frontend (React/Tailwind CSS) - 추후 확장 예정
 
 legal-mind-frontend/
 ├── src/
-│   ├── components/      # UI 컴포넌트 (ChatWindow, Message 등)
-│   ├── hooks/           # API 통신 및 상태 로직 분리
-│   ├── pages/           # 메인 채팅 및 서비스 소개 페이지
-│   ├── services/        # 백엔드(FastAPI)와 통신하는 함수
-│   ├── styles/          # Tailwind CSS 스타일 설정
-│   └── utils/           # 유틸리티 (날짜 변환, 텍스트 가공 등)
-├── tailwind.config.js   # Tailwind 설정
-└── package.json         # 라이브러리 관리
+│   ├── components/             # UI 컴포넌트 (ChatWindow 등)
+│   ├── hooks/                  # API 통신 및 상태 로직 분리
+│   ├── pages/                  # 메인 채팅 및 서비스 페이지
+│   ├── services/               # 백엔드와 통신하는 함수
+│   ├── styles/                 # Tailwind CSS 스타일 설정
+│   └── utils/                  # 유틸리티 (날짜 변환 등)
+├── tailwind.config.js          # Tailwind 설정
+└── package.json                # 라이브러리 관리
 
 
 ## 📂 5. 문서 바로가기 (Documentation)
