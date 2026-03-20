@@ -24,10 +24,6 @@
 3. **고용보장/해고:** 부당해고 판례 매칭 및 실업급여 수급 자격 진단.
 4. **일·가정 양립:** 임신/육아기 단축근무, 육아휴직 및 복직 후 권리 보호.
 
-### 🛡️ 리스크 관리 (Compliance)
-- **Source Citation:** 답변의 근거가 되는 법 조항과 판례 번호를 명시합니다.
-- **Disclaimer:** 모든 답변 하단에 "본 서비스는 법적 효력이 없는 정보 제공용"임을 고지합니다.
-
 ---
 
 ## 🛠️ 3. 기술 스택 (Tech Stack)
@@ -38,11 +34,10 @@
 | | Pydantic / SQLAlchemy | 강력한 데이터 타입 검증 및 안정적인 DB 객체 관계 매핑 |
 | **Frontend** | React 18 / JSX | 선언적 UI 설계를 통한 가독성 증대 및 현대적 웹 표준 기반 개발 |
 | | Vite / CSS Modules | 최적화된 빌드 환경 및 독립적 스타일링으로 유지보수 용이 |
-| **AI & LLM** | LangChain / RAG | 공고문 기반 지식 베이스 구축으로 환각 방지 및 분석 자동화 |
+| **AI & LLM** | LangChain / RAG | 법령 기반 지식 베이스 구축으로 환각 방지 및 분석 자동화 |
 | | GPT-4o, Claude 3.5 | 시나리오 기반 맞춤형 전략 수립 및 고도화된 컨설팅 로직 수행 |
 | **Database** | PostgreSQL | 유저 정보 및 대시보드 데이터의 정교한 관계형 데이터 설계 |
 | | ChromaDB | 법령/판례 데이터 벡터화를 통한 유사도 기반 검색 엔진 |
-| **Etc** | OAuth 2.0 / Selenium | 소셜 로그인 보안 강화 및 실시간 데이터 수집 자동화 |
 
 ---
 
@@ -73,10 +68,11 @@ legal-mind-rag/
 ├── .gitignore                  # [관리] Git 제외 목록
 ├── requirements.txt            # [설치] 의존성 라이브러리 목록
 └── README.md                   # [대문] 프로젝트 소개
-
+```
 
 ### 🔹 Frontend (React/Tailwind CSS) - 추후 확장 예정
 
+```text
 legal-mind-frontend/
 ├── src/
 │   ├── components/             # UI 컴포넌트 (ChatWindow 등)
@@ -87,9 +83,21 @@ legal-mind-frontend/
 │   └── utils/                  # 유틸리티 (날짜 변환 등)
 ├── tailwind.config.js          # Tailwind 설정
 └── package.json                # 라이브러리 관리
+```
 
+---
 
-## 📂 5. 문서 바로가기 (Documentation)
+## 💰 5. 비즈니스 모델 (Revenue Model)
+
+*   **인프라 매칭 수수료 (B2B):** 시뮬레이션 결과와 연계된 검증된 스마트 기기/솔루션 업체 매칭.
+*   **B2B 전략 제휴:** 소상공인 대상 세무, 법률, 마케팅 서비스와의 정보성 연계 및 광고 모델.
+*   **심화 분석 리포트 (Future):** AI 진단을 넘어선 정밀 경영 진단 및 심화 리포트 서비스.
+
+---
+
+## 📂 6. 문서 바로가기 (Documentation)
+
+> 아래 항목을 클릭하면 해당 상세 설계 문서(`docs/` 폴더 내 파일)로 이동합니다.
 
 *   [01_기획 및 요구사항](docs/01_concept_and_requirements.md)
 *   [02_시스템 아키텍처](docs/02_system_architecture.md)
@@ -100,6 +108,6 @@ legal-mind-frontend/
 
 ---
 
-## 📈 6. 버전 관리 (Changelog)
+## 📈 7. 버전 관리 (Changelog)
 
 *   **v0.1 (2026-03-10):** 프로젝트 초기 기획 및 README/문서 구조 정의.
