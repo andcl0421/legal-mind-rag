@@ -108,6 +108,25 @@ legal-mind-frontend/
 
 ---
 
+---
+
+## 🏗️ 데이터베이스 설계 (ERD)
+
+서비스의 핵심 비즈니스 로직과 RAG 근거 추적을 위한 데이터 구조입니다. `dbdiagram.io`를 활용하여 설계되었으며, 실제 DB 구현과 100% 일치합니다.
+
+<p align="center">
+  <img src="./images/Legal-Mind-RAG-ERD.png" alt="Legal-Mind-RAG ERD 설계도" width="100%">
+</p>
+
+> 💡 **상세 설계 명세:** 각 테이블의 컬럼 역할, 타입, ENUM 정의 등 상세한 내용은 [데이터 및 RAG 상세 설계서](./docs/03_data_design_spec.md)에서 확인하실 수 있습니다.
+
+---
+
 ## 📈 7. 버전 관리 (Changelog)
 
-*   **v0.1 (2026-03-10):** 프로젝트 초기 기획 및 README/문서 구조 정의.
+## 📈 7. 버전 관리 (Changelog)
+
+* **v0.2 (2026-03-23):** * 데이터베이스 상세 설계 완료 (ERD 시각화 및 images 폴더 자산화).
+    * RAG 지식베이스 수집 및 청킹(Chunking) 전략 수립.
+    * 도메인별 상세 명세서 작성 및 비즈니스 로직 정의 (`03_data_design_spec.md`).
+* **v0.1 (2026-03-10):** 프로젝트 초기 기획 및 README/문서 구조 정의.
