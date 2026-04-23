@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import api  # 우리가 만든 중앙 통제실 연결
+from app.database.session import Base, engine
+from app.models import AnswerMeta, AnswerTrace, ChatSession, Message, User
 
 # 1. FastAPI 앱 인스턴스 생성
 app = FastAPI(
@@ -8,6 +10,8 @@ app = FastAPI(
     description="RAG 기반 지능형 노무 상담 서비스",
     version="1.0.0"
 )
+
+Base.metadata.create_all(bind=engine)
 
 # 2. CORS 설정 (프론트엔드와 백엔드가 서로 대화할 수 있게 허용)
 app.add_middleware(

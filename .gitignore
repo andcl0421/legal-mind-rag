@@ -1,6 +1,58 @@
-venv/
+# [Python / FastAPI Standard]
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
+build/
+dist/
+.python-version
+
+# [Environment Variables - 보안 필수!]
+# python-dotenv로 관리하는 설정 파일들
 .env
-sql_app.db
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# API Key (OpenAI 등)가 포함된 파일은 절대 올리지 않습니다.
+
+# [Database & SQLAlchemy]
+# sqlite 사용 시 생성되는 파일
+*.db
+*.sqlite3
+# PostgreSQL(asyncpg, psycopg2) 연결 설정이나 로그
+*.log
+instance/
+
+# [Alembic - Migration]
+# 주의: alembic/versions 폴더 내의 히스토리 파일(.py)은 팀 공유를 위해 제외하지 않습니다.
+alembic/versions/__pycache__/
+# 개인적인 DB 접속 정보가 담긴 경우 제외 (환경변수 처리가 권장됨)
+# alembic.ini 
+
+# [Node / React (Frontend)]
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+.pnp
+.pnp.js
+/build
+/dist
+
+# [IDE / Editors / OS]
 .vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# [AI / RAG / Data]
+# OpenAI 처리 시 발생하는 임시 데이터나 벡터 저장소
+/data/vector_db/
+/storage/
+extracted_texts/
