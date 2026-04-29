@@ -265,6 +265,33 @@ def _tokenize(text: str) -> set[str]:
     }
 
 
+def _is_probable_front_matter(chunk: KnowledgeChunk) -> bool:
+    if chunk.source_type != "raw" or chunk.article_number:
+        return False
+
+    content = chunk.content
+    front_matter_markers = (
+        "국가법령정보센터",
+        "법제처",
+        "[시행",
+        "고용노동부",
+        "일부개정",
+        "목적",
+    )
+    marker_hits = sum(1 for marker in front_matter_markers if marker in content)
+    return marker_hits >= 2
+
+
+def _extract_article_heading(chunk: KnowledgeChunk) -> str:
+    if not chunk.article_number:
+        return ""
+
+    match = re.search(r"제\s*\d+\s*조(?:의\s*\d+)?\(([^)]+)\)", chunk.content)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
 def search_knowledge(question: str, top_k: int = 3) -> list[tuple[KnowledgeChunk, float]]:
     question_tokens = _tokenize(question)
     _, query_vector = embed_text(question)
@@ -289,10 +316,22 @@ def search_knowledge(question: str, top_k: int = 3) -> list[tuple[KnowledgeChunk
             title_bonus = len(title_overlap) * 1.5
             rank_score += title_bonus
 
+        article_heading = _extract_article_heading(chunk)
+        heading_tokens = _tokenize(article_heading)
+        heading_overlap = question_tokens & heading_tokens
+        if heading_overlap:
+            rank_score += len(heading_overlap) * 3.0
+
         if any(keyword.lower() in question.lower() for keyword in _CATEGORY_KEYWORDS.get(chunk.category, ())):
             rank_score += 1.0
         if chunk.source_type == "raw":
             rank_score += 1.0
+            if chunk.article_number:
+                rank_score += 1.2
+            else:
+                rank_score -= 1.5
+                if _is_probable_front_matter(chunk):
+                    rank_score -= 2.0
         elif chunk.source_type == "seed":
             rank_score += 0.3
 
@@ -309,4 +348,14 @@ def search_knowledge(question: str, top_k: int = 3) -> list[tuple[KnowledgeChunk
         return [(fallback_chunks[0], 0.1)]
 
     scored.sort(key=lambda item: (item[2], item[1], item[0].chunk_id), reverse=True)
-    return [(chunk, normalized_score) for chunk, normalized_score, _ in scored[:top_k]]
+    selected: list[tuple[KnowledgeChunk, float]] = []
+    seen_sources: set[tuple[str, str | None]] = set()
+    for chunk, normalized_score, _ in scored:
+        source_key = (chunk.source_file, chunk.article_number)
+        if source_key in seen_sources:
+            continue
+        selected.append((chunk, normalized_score))
+        seen_sources.add(source_key)
+        if len(selected) >= top_k:
+            break
+    return selected

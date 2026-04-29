@@ -16,6 +16,7 @@ class Settings:
     
     # 보안 설정 (나중에 로그인 기능 때 사용)
     SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key-change-me")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     ALGORITHM = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES = 30
 

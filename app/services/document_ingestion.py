@@ -11,7 +11,7 @@ from app.services.embedding_service import dumps_vector, embed_text
 
 try:
     from pypdf import PdfReader
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover
     PdfReader = None
 
 
@@ -19,6 +19,8 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT_DIR / "data" / "raw"
 PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 PROCESSED_CHUNKS_PATH = PROCESSED_DIR / "knowledge_chunks.json"
+
+ARTICLE_HEADER_PATTERN = re.compile(r"(제\s*\d+\s*조(?:의\s*\d+)?)\s*\(")
 
 
 @dataclass(frozen=True)
@@ -37,15 +39,14 @@ SUPPORTED_EXTENSIONS = {".txt", ".md", ".json", ".pdf"}
 
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "임금/수당": ("임금", "주휴", "퇴직금", "수당", "체불", "급여"),
-    "근로시간/휴가": ("연차", "휴가", "근로시간", "52시간", "야근", "연장근로"),
+    "근로시간/휴가": ("휴게", "휴일", "근로시간", "52시간", "연차", "연장근로"),
     "고용보장/해고": ("해고", "부당해고", "징계", "권고사직", "실업급여"),
-    "일·가정 양립": ("육아휴직", "육아", "임신", "출산", "복직", "단축근무"),
+    "일·가정 양립": ("육아휴직", "육아", "임신", "출산", "복직", "유연근무"),
 }
 
 
 def _normalize_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _guess_category(text: str) -> str:
@@ -58,12 +59,22 @@ def _guess_category(text: str) -> str:
     return best if scores[best] > 0 else "일반 상담"
 
 
+def _normalize_article_number(raw_article: str | None) -> str | None:
+    if not raw_article:
+        return None
+    normalized = re.sub(r"\s+", "", raw_article)
+    normalized = normalized.replace("의", "의")
+    return normalized
+
+
 def _extract_article_number(text: str) -> str | None:
-    match = re.search(r"(제\s*\d+\s*조)", text)
-    return match.group(1).replace(" ", "") if match else None
+    match = ARTICLE_HEADER_PATTERN.search(text)
+    if not match:
+        return None
+    return _normalize_article_number(match.group(1))
 
 
-def _chunk_text(text: str, chunk_size: int = 550, overlap: int = 100) -> list[str]:
+def _chunk_text(text: str, chunk_size: int = 650, overlap: int = 120) -> list[str]:
     chunks: list[str] = []
     start = 0
     while start < len(text):
@@ -75,6 +86,15 @@ def _chunk_text(text: str, chunk_size: int = 550, overlap: int = 100) -> list[st
             break
         start = max(end - overlap, start + 1)
     return chunks
+
+
+def _chunk_article_text(text: str) -> list[str]:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return []
+    if len(normalized) <= 700:
+        return [normalized]
+    return _chunk_text(normalized, chunk_size=700, overlap=140)
 
 
 def _read_raw_file(path: Path) -> str:
@@ -95,15 +115,86 @@ def _read_pdf_pages(path: Path) -> list[tuple[int, str]]:
     page_texts: list[tuple[int, str]] = []
     for page_number, page in enumerate(reader.pages, start=1):
         page_text = page.extract_text() or ""
-        if page_text.strip():
-            page_texts.append((page_number, _normalize_text(page_text)))
+        normalized = _normalize_text(page_text)
+        if normalized:
+            page_texts.append((page_number, normalized))
     return page_texts
 
 
-def _iter_document_segments(path: Path) -> list[tuple[str, int | None]]:
+def _split_article_sections(text: str) -> list[tuple[str | None, str]]:
+    matches = list(ARTICLE_HEADER_PATTERN.finditer(text))
+    if not matches:
+        return [(None, text)]
+
+    sections: list[tuple[str | None, str]] = []
+    if matches[0].start() > 0:
+        preamble = text[: matches[0].start()].strip()
+        if preamble:
+            sections.append((None, preamble))
+
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        article_text = text[start:end].strip()
+        if article_text:
+            sections.append((_normalize_article_number(match.group(1)), article_text))
+
+    return sections
+
+
+def _iter_pdf_article_segments(path: Path) -> list[tuple[str, int | None, str | None]]:
+    pages = _read_pdf_pages(path)
+    segments: list[tuple[str, int | None, str | None]] = []
+
+    carry_article_number: str | None = None
+    carry_text_parts: list[str] = []
+    carry_page_number: int | None = None
+
+    def flush_carry() -> None:
+        nonlocal carry_article_number, carry_text_parts, carry_page_number
+        if carry_text_parts:
+            merged_text = _normalize_text(" ".join(carry_text_parts))
+            if merged_text:
+                segments.append((merged_text, carry_page_number, carry_article_number))
+        carry_article_number = None
+        carry_text_parts = []
+        carry_page_number = None
+
+    for page_number, page_text in pages:
+        sections = _split_article_sections(page_text)
+        if not sections:
+            continue
+
+        for article_number, section_text in sections:
+            normalized_text = _normalize_text(section_text)
+            if not normalized_text:
+                continue
+
+            if article_number is None:
+                if carry_article_number is not None:
+                    carry_text_parts.append(normalized_text)
+                else:
+                    segments.append((normalized_text, page_number, None))
+                continue
+
+            if carry_article_number is not None and article_number != carry_article_number:
+                flush_carry()
+
+            if carry_article_number is None:
+                carry_article_number = article_number
+                carry_page_number = page_number
+                carry_text_parts = [normalized_text]
+            else:
+                carry_text_parts.append(normalized_text)
+
+    flush_carry()
+    return segments
+
+
+def _iter_document_segments(path: Path) -> list[tuple[str, int | None, str | None]]:
     if path.suffix.lower() == ".pdf":
-        return [(text, page_number) for page_number, text in _read_pdf_pages(path)]
-    return [(_read_raw_file(path), None)]
+        return _iter_pdf_article_segments(path)
+    return [(_read_raw_file(path), None, None)]
 
 
 def ingest_raw_documents() -> dict[str, int | list[str]]:
@@ -128,19 +219,19 @@ def ingest_raw_documents() -> dict[str, int | list[str]]:
         except RuntimeError as exc:
             skipped_files.append(f"{path.name}: {exc}")
             continue
-        except Exception as exc:  # pragma: no cover - defensive logging path
+        except Exception as exc:  # pragma: no cover
             skipped_files.append(f"{path.name}: 읽기 실패 ({exc})")
             continue
 
         title = path.stem
         segment_has_content = False
-        for text, page_number in segments:
+        for text, page_number, article_number in segments:
             if not text:
                 continue
             segment_has_content = True
             category = _guess_category(text)
 
-            for piece in _chunk_text(text):
+            for piece in _chunk_article_text(text):
                 chunks.append(
                     ProcessedChunk(
                         chunk_id=chunk_id,
@@ -150,7 +241,7 @@ def ingest_raw_documents() -> dict[str, int | list[str]]:
                         category=category,
                         content=piece,
                         page_number=page_number,
-                        article_number=_extract_article_number(piece),
+                        article_number=article_number or _extract_article_number(piece),
                     )
                 )
                 chunk_id += 1
@@ -182,39 +273,42 @@ def persist_processed_chunks_to_db(db: Session) -> dict[str, int]:
     from app.models import Document, DocumentChunk, DocumentChunkEmbedding
 
     processed_chunks = load_processed_chunks()
+    raw_document_ids = [
+        document_id
+        for (document_id,) in db.query(Document.document_id).filter(Document.source_type == "raw").all()
+    ]
+
+    if raw_document_ids:
+        db.query(DocumentChunkEmbedding).filter(
+            DocumentChunkEmbedding.chunk_id.in_(
+                db.query(DocumentChunk.chunk_id).filter(DocumentChunk.document_id.in_(raw_document_ids))
+            )
+        ).delete(synchronize_session=False)
+        db.query(DocumentChunk).filter(DocumentChunk.document_id.in_(raw_document_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(Document).filter(Document.document_id.in_(raw_document_ids)).delete(synchronize_session=False)
+        db.commit()
+        db.expunge_all()
+
     if not processed_chunks:
         return {"document_count": 0, "chunk_count": 0}
 
-    source_files = {chunk.source_file for chunk in processed_chunks}
-    existing_documents = db.query(Document).filter(Document.source_file.in_(source_files)).all()
-    existing_by_source = {doc.source_file: doc for doc in existing_documents}
+    chunks_by_source: dict[str, list[ProcessedChunk]] = {}
+    for chunk in processed_chunks:
+        chunks_by_source.setdefault(chunk.source_file, []).append(chunk)
 
     chunk_count = 0
-    for source_file in source_files:
-        file_chunks = [chunk for chunk in processed_chunks if chunk.source_file == source_file]
+    for file_chunks in chunks_by_source.values():
         first_chunk = file_chunks[0]
-
-        document = existing_by_source.get(source_file)
-        if document is None:
-            document = Document(
-                title=first_chunk.title,
-                source_type=first_chunk.source_type,
-                source_file=first_chunk.source_file,
-                category=first_chunk.category,
-            )
-            db.add(document)
-            db.flush()
-        else:
-            document.title = first_chunk.title
-            document.source_type = first_chunk.source_type
-            document.category = first_chunk.category
-            db.query(DocumentChunkEmbedding).filter(
-                DocumentChunkEmbedding.chunk_id.in_(
-                    db.query(DocumentChunk.chunk_id).filter(DocumentChunk.document_id == document.document_id)
-                )
-            ).delete(synchronize_session=False)
-            db.query(DocumentChunk).filter(DocumentChunk.document_id == document.document_id).delete()
-            db.flush()
+        document = Document(
+            title=first_chunk.title,
+            source_type=first_chunk.source_type,
+            source_file=first_chunk.source_file,
+            category=first_chunk.category,
+        )
+        db.add(document)
+        db.flush()
 
         for chunk in file_chunks:
             document_chunk = DocumentChunk(
@@ -241,4 +335,4 @@ def persist_processed_chunks_to_db(db: Session) -> dict[str, int]:
             chunk_count += 1
 
     db.commit()
-    return {"document_count": len(source_files), "chunk_count": chunk_count}
+    return {"document_count": len(chunks_by_source), "chunk_count": chunk_count}
