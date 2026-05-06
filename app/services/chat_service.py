@@ -1,12 +1,16 @@
 from collections.abc import Sequence
+import json
+import os
 import re
 import uuid
 
+from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.models import AnswerMeta, AnswerTrace, ChatSession, Message
 from app.schemas.chat import (
     AnswerMetaResponse,
+    AnswerSectionResponse,
     AnswerSourceResponse,
     AnswerTraceResponse,
     ChatMessageHistoryResponse,
@@ -26,10 +30,34 @@ DISCLAIMER = (
 )
 
 GENERAL_CATEGORY = "일반 상담"
+DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
+LLM_MAX_RETRIES = 2
+_ALLOWED_SECTION_HEADINGS = {"핵심 기준", "질문에의 적용", "주의할 점"}
+
+_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "임금/수당": ("임금", "월급", "급여", "수당", "체불", "지연이자", "임금명세서", "퇴직금", "주휴"),
+    "근로시간/휴가": ("연차", "휴가", "휴일", "휴게", "근로시간", "야근", "연장근로"),
+    "고용보장/해고": ("해고", "해고예고", "권고사직", "징계", "부당해고", "서면통지", "전직", "감봉"),
+    "일·가정 양립": ("육아휴직", "육아", "임신", "출산", "복직", "단축근무", "출산전후휴가"),
+}
 
 
-def _choose_category(chunks: Sequence[tuple[KnowledgeChunk, float]]) -> str:
-    return chunks[0][0].category if chunks else GENERAL_CATEGORY
+def _choose_category(question: str, chunks: Sequence[tuple[KnowledgeChunk, float]]) -> str:
+    question_scores = {
+        category: sum(1 for keyword in keywords if keyword in question)
+        for category, keywords in _CATEGORY_KEYWORDS.items()
+    }
+    best_question_category = max(question_scores, key=question_scores.get)
+    if question_scores[best_question_category] > 0:
+        return best_question_category
+
+    chunk_scores: dict[str, float] = {}
+    for chunk, score in chunks:
+        chunk_scores[chunk.category] = chunk_scores.get(chunk.category, 0.0) + score
+
+    if chunk_scores:
+        return max(chunk_scores, key=chunk_scores.get)
+    return GENERAL_CATEGORY
 
 
 def _choose_risk_level(question: str) -> str:
@@ -156,7 +184,12 @@ def _build_guidance(chunks: Sequence[tuple[KnowledgeChunk, float]]) -> list[str]
     return guidance
 
 
-def _build_answer_body(primary_chunk: KnowledgeChunk, category: str) -> str:
+def _build_answer_sections(
+    question: str,
+    primary_chunk: KnowledgeChunk,
+    category: str,
+    chunks: Sequence[tuple[KnowledgeChunk, float]],
+) -> list[AnswerSectionResponse]:
     citation = _build_citation(primary_chunk)
     focus_excerpt = _extract_focus_excerpt(primary_chunk)
     category_hint = {
@@ -166,53 +199,295 @@ def _build_answer_body(primary_chunk: KnowledgeChunk, category: str) -> str:
         "일·가정 양립": "휴직 요건, 사용 기간, 불이익 금지 여부를 함께 확인하시는 것이 중요합니다.",
     }.get(category, "사실관계와 조문 기준을 함께 맞춰 보시는 것이 중요합니다.")
 
-    lines = [
-        f"우선 기준이 되는 조문은 {citation}입니다.",
-        category_hint,
-    ]
+    rule_body = f"우선 기준이 되는 조문은 {citation}입니다. {category_hint}"
     if focus_excerpt:
-        lines.append(f"조문상 핵심은 다음과 같습니다. {focus_excerpt}")
-    lines.append(
-        "다만 이 조문이 질문 상황에 그대로 적용되는지는 근로형태, 실제 근무 방식, 회사의 운영 방식까지 함께 봐야 합니다."
+        rule_body = f"{rule_body} 조문상 핵심은 다음과 같습니다. {focus_excerpt}"
+
+    application_body = (
+        f"질문하신 내용은 '{_normalize_space(question)}'인데, "
+        "이 조문이 그대로 적용되는지는 근로형태, 실제 근무 방식, 회사의 운영 방식까지 함께 봐야 합니다."
     )
-    return " ".join(lines)
+    risk_body = (
+        "사실관계가 더 필요하거나 검색된 조문만으로 단정하기 어려운 부분은 추가 자료를 확인한 뒤 판단하는 편이 안전합니다."
+    )
+
+    section_chunk_ids = [primary_chunk.chunk_id]
+    if len(chunks) > 1:
+        section_chunk_ids.extend(chunk.chunk_id for chunk, _ in chunks[1:3])
+
+    sections = [
+        AnswerSectionResponse(
+            heading="핵심 기준",
+            body=rule_body,
+            citation=citation,
+            source_chunk_ids=[primary_chunk.chunk_id],
+        ),
+        AnswerSectionResponse(
+            heading="질문에의 적용",
+            body=application_body,
+            citation=citation,
+            source_chunk_ids=section_chunk_ids,
+        ),
+        AnswerSectionResponse(
+            heading="주의할 점",
+            body=risk_body,
+            citation=citation,
+            source_chunk_ids=[primary_chunk.chunk_id],
+        ),
+    ]
+    return sections
 
 
 def _build_assistant_text(
     summary: str,
-    answer: str,
+    answer_sections: Sequence[AnswerSectionResponse],
     guidance: list[str],
     primary_citation: str | None,
     question: str,
 ) -> str:
-    lines = [summary, "", answer, "", "참고하실 점", *(f"- {item}" for item in guidance)]
+    lines = [summary]
+    for section in answer_sections:
+        lines.extend(["", f"[{section.heading}] {section.body}"])
+        if section.citation:
+            lines.append(f"근거: {section.citation}")
+    lines.extend(["", "참고하실 점", *(f"- {item}" for item in guidance)])
     if primary_citation:
         lines.extend(["", f"주요 근거 조문: {primary_citation}"])
     lines.extend(["", f"질문 내용: {question}"])
     return "\n".join(lines)
 
 
+def _build_llm_prompt_context(chunks: Sequence[tuple[KnowledgeChunk, float]]) -> str:
+    lines: list[str] = []
+    for index, (chunk, score) in enumerate(chunks, start=1):
+        lines.append(f"[{index}] citation: {_build_citation(chunk)}")
+        lines.append(f"[{index}] source_label: {_build_source_label(chunk)}")
+        lines.append(f"[{index}] relevance_score: {round(score, 2)}")
+        lines.append(f"[{index}] excerpt: {_extract_focus_excerpt(chunk)}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _normalize_user_context(user_context: dict[str, str | None] | None) -> dict[str, str]:
+    if not user_context:
+        return {}
+    normalized: dict[str, str] = {}
+    for key, value in user_context.items():
+        if value is None:
+            continue
+        compact = _normalize_space(str(value))
+        if compact:
+            normalized[key] = compact
+    return normalized
+
+
+def _format_user_context_for_prompt(user_context: dict[str, str]) -> str:
+    if not user_context:
+        return "없음"
+    lines = [f"- {key}: {value}" for key, value in user_context.items()]
+    return "\n".join(lines)
+
+
+def _extract_json_payload(raw: str) -> dict[str, object] | None:
+    if not raw:
+        return None
+    content = raw.strip()
+    try:
+        parsed = json.loads(content)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, flags=re.DOTALL)
+    if fenced_match:
+        try:
+            parsed = json.loads(fenced_match.group(1))
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+    first = content.find("{")
+    last = content.rfind("}")
+    if first >= 0 and last > first:
+        try:
+            parsed = json.loads(content[first : last + 1])
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _sanitize_llm_payload(
+    payload: dict[str, object],
+    allowed_citations: set[str],
+) -> dict[str, object] | None:
+    summary = str(payload.get("summary", "")).strip()
+    caution = str(payload.get("caution", "")).strip()
+
+    raw_sections = payload.get("answer_sections")
+    sections: list[dict[str, str]] = []
+    if isinstance(raw_sections, list):
+        for item in raw_sections[:3]:
+            if not isinstance(item, dict):
+                continue
+            heading = str(item.get("heading", "")).strip()
+            body = str(item.get("body", "")).strip()
+            citation = str(item.get("citation", "")).strip()
+            if not body:
+                continue
+            if heading not in _ALLOWED_SECTION_HEADINGS:
+                continue
+            if citation and citation not in allowed_citations:
+                citation = ""
+            sections.append({"heading": heading, "body": body, "citation": citation})
+
+    raw_guidance = payload.get("guidance")
+    guidance: list[str] = []
+    if isinstance(raw_guidance, list):
+        guidance = [str(item).strip() for item in raw_guidance if str(item).strip()]
+
+    if not sections and not summary:
+        return None
+    return {
+        "summary": summary,
+        "answer_sections": sections,
+        "guidance": guidance,
+        "caution": caution,
+    }
+
+
+def _generate_llm_answer_payload(
+    question: str,
+    category: str,
+    chunks: Sequence[tuple[KnowledgeChunk, float]],
+    user_context: dict[str, str] | None = None,
+) -> dict[str, object] | None:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    model_name = os.getenv("OPENAI_CHAT_MODEL", DEFAULT_CHAT_MODEL)
+    client = OpenAI(api_key=api_key)
+    context = _build_llm_prompt_context(chunks)
+    context_text = _format_user_context_for_prompt(user_context or {})
+    citations = list(dict.fromkeys(_build_citation(chunk) for chunk, _ in chunks))
+
+    system_prompt = (
+        "당신은 근거 기반 노동법 상담 도우미입니다. "
+        "반드시 제공된 근거 문맥만 사용해 설명하세요. "
+        "단정적 법률자문처럼 말하지 말고 사실관계에 따른 변동 가능성을 명시하세요."
+    )
+    user_prompt = (
+        f"질문: {question}\n"
+        f"분류: {category}\n"
+        f"사용자 맥락:\n{context_text}\n"
+        f"사용 가능한 근거(citation/excerpt):\n{context}\n\n"
+        "아래 JSON 스키마로만 답하세요. 마크다운/설명문 금지.\n"
+        "{\n"
+        '  "summary": "string",\n'
+        '  "answer_sections": [{"heading":"핵심 기준|질문에의 적용|주의할 점","body":"string","citation":"string"}],\n'
+        '  "guidance": ["string", "string", "string"],\n'
+        '  "caution": "string"\n'
+        "}\n"
+        f"citation은 반드시 이 목록에서만 선택: {citations}"
+    )
+
+    allowed_citations = set(citations)
+    for _ in range(LLM_MAX_RETRIES):
+        try:
+            response = client.responses.create(
+                model=model_name,
+                temperature=0.2,
+                input=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            content = (response.output_text or "").strip()
+            parsed = _extract_json_payload(content)
+            if not parsed:
+                continue
+            sanitized = _sanitize_llm_payload(parsed, allowed_citations)
+            if sanitized:
+                return sanitized
+        except Exception:
+            continue
+    return None
+
+
 def _build_structured_answer(
     question: str,
     category: str,
     chunks: Sequence[tuple[KnowledgeChunk, float]],
+    user_context: dict[str, str] | None = None,
 ) -> tuple[StructuredAnswerResponse, str | None, float, str]:
     primary_chunk, primary_score = chunks[0]
     primary_citation = _build_citation(primary_chunk)
     applied_rule = primary_citation
 
-    summary = (
-        f"질문 내용은 `{category}` 범주로 보이며, "
-        f"우선적으로 {primary_citation}을 확인해 보시는 것이 적절합니다."
-    )
-    answer = _build_answer_body(primary_chunk, category)
-    guidance = _build_guidance(chunks)
-    caution = (
-        "개별 사안은 사실관계에 따라 결론이 달라질 수 있으므로, "
-        "해고·징계·체불처럼 즉시 대응이 필요한 경우에는 전문 상담과 함께 검토하시는 편이 안전합니다."
+    cited_rules = list(dict.fromkeys(_build_citation(chunk) for chunk, _ in chunks))
+    llm_payload = _generate_llm_answer_payload(
+        question=question,
+        category=category,
+        chunks=chunks,
+        user_context=user_context,
     )
 
-    cited_rules = list(dict.fromkeys(_build_citation(chunk) for chunk, _ in chunks))
+    if llm_payload:
+        raw_sections = llm_payload.get("answer_sections")
+        answer_sections: list[AnswerSectionResponse] = []
+        if isinstance(raw_sections, list):
+            for item in raw_sections[:3]:
+                if not isinstance(item, dict):
+                    continue
+                heading = str(item.get("heading", "")).strip() or "핵심 기준"
+                body = str(item.get("body", "")).strip()
+                citation = str(item.get("citation", "")).strip() or primary_citation
+                if not body:
+                    continue
+                answer_sections.append(
+                    AnswerSectionResponse(
+                        heading=heading,
+                        body=body,
+                        citation=citation,
+                        source_chunk_ids=[chunk.chunk_id for chunk, _ in chunks],
+                    )
+                )
+
+        if not answer_sections:
+            answer_sections = _build_answer_sections(question, primary_chunk, category, chunks)
+
+        summary = str(llm_payload.get("summary", "")).strip() or (
+            f"질문 내용은 `{category}` 범주로 보이며, "
+            f"우선적으로 {primary_citation}을 확인해 보시는 것이 적절합니다."
+        )
+        raw_guidance = llm_payload.get("guidance")
+        guidance = [str(item).strip() for item in raw_guidance if str(item).strip()] if isinstance(raw_guidance, list) else []
+        if not guidance:
+            guidance = _build_guidance(chunks)
+        caution = str(llm_payload.get("caution", "")).strip() or (
+            "개별 사안은 사실관계에 따라 결론이 달라질 수 있으므로, "
+            "해고·징계·체불처럼 즉시 대응이 필요한 경우에는 전문 상담과 함께 검토하시는 편이 안전합니다."
+        )
+    else:
+        summary = (
+            f"질문 내용은 `{category}` 범주로 보이며, "
+            f"우선적으로 {primary_citation}을 확인해 보시는 것이 적절합니다."
+        )
+        answer_sections = _build_answer_sections(question, primary_chunk, category, chunks)
+        guidance = _build_guidance(chunks)
+        caution = (
+            "개별 사안은 사실관계에 따라 결론이 달라질 수 있으므로, "
+            "해고·징계·체불처럼 즉시 대응이 필요한 경우에는 전문 상담과 함께 검토하시는 편이 안전합니다."
+        )
+
+    answer = "\n\n".join(
+        f"[{section.heading}] {section.body}\n근거: {section.citation}"
+        if section.citation
+        else f"[{section.heading}] {section.body}"
+        for section in answer_sections
+    )
+
     sources = [
         AnswerSourceResponse(
             chunk_id=chunk.chunk_id,
@@ -230,16 +505,20 @@ def _build_structured_answer(
 
     assistant_text = _build_assistant_text(
         summary=summary,
-        answer=answer,
+        answer_sections=answer_sections,
         guidance=guidance,
         primary_citation=primary_citation,
         question=question,
     )
+    if user_context:
+        context_lines = [f"- {key}: {value}" for key, value in user_context.items()]
+        assistant_text = f"{assistant_text}\n\n사용자 맥락\n" + "\n".join(context_lines)
 
     return (
         StructuredAnswerResponse(
             summary=summary,
             answer=answer,
+            answer_sections=answer_sections,
             guidance=guidance,
             caution=caution,
             cited_rules=cited_rules,
@@ -252,7 +531,12 @@ def _build_structured_answer(
     )
 
 
-def process_chat_message(db: Session, content: str, chat_session_id: str | None = None) -> ChatResponse:
+def process_chat_message(
+    db: Session,
+    content: str,
+    chat_session_id: str | None = None,
+    user_context: dict[str, str | None] | None = None,
+) -> ChatResponse:
     content = content.strip()
     if not content:
         raise ValueError("content must not be empty")
@@ -261,12 +545,12 @@ def process_chat_message(db: Session, content: str, chat_session_id: str | None 
     if chat_session_id:
         session = db.query(ChatSession).filter(ChatSession.chat_session_id == chat_session_id).first()
 
-    chunks = search_knowledge(content, top_k=3)
+    normalized_context = _normalize_user_context(user_context)
+    chunks = search_knowledge(content, top_k=3, user_context=normalized_context)
     if not chunks:
         raise ValueError("현재 검색 가능한 문서가 없어 상담 로직을 진행할 수 없습니다.")
-    category = _choose_category(chunks)
+    category = _choose_category(content, chunks)
     risk_level = _choose_risk_level(content)
-
     if session is None:
         session = ChatSession(
             title=_build_title(content, category),
@@ -303,6 +587,7 @@ def process_chat_message(db: Session, content: str, chat_session_id: str | None 
         content,
         category,
         chunks,
+        user_context=normalized_context,
     )
 
     assistant_message = Message(
@@ -361,8 +646,10 @@ def process_chat_message(db: Session, content: str, chat_session_id: str | None 
                 step_order=trace.step_order,
                 logic_type=trace.logic_type,
                 relevance_score=trace.relevance_score,
+                citation=_build_citation(chunk),
+                source_label=_build_source_label(chunk),
             )
-            for trace in traces
+            for trace, (chunk, _score) in zip(traces, chunks, strict=False)
         ],
     )
 

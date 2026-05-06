@@ -49,6 +49,17 @@ def get_chat_session_messages(chat_session_id: str, db: Session = Depends(get_db
 @router.post("", response_model=ChatResponse)
 def create_chat_message(payload: ChatRequest, db: Session = Depends(get_db)):
     try:
-        return process_chat_message(db=db, content=payload.content, chat_session_id=payload.chat_session_id)
+        user_context = {
+            "company_size": payload.company_size,
+            "industry": payload.industry,
+            "employment_type": payload.employment_type,
+            "employment_status": payload.employment_status,
+        }
+        return process_chat_message(
+            db=db,
+            content=payload.content,
+            chat_session_id=payload.chat_session_id,
+            user_context=user_context,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

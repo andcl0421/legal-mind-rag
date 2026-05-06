@@ -1,6 +1,7 @@
 from app.models.chat import AnswerMeta, AnswerTrace, ChatSession, Message
 from app.models.document import Document, DocumentChunk
 from app.models.embedding import DocumentChunkEmbedding
+from app.models.notification import UserNotification
 from app.models.user import User
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "Document",
     "DocumentChunk",
     "DocumentChunkEmbedding",
+    "UserNotification",
 ]

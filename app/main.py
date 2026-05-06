@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import api  # 우리가 만든 중앙 통제실 연결
 from app.database.session import Base, engine
-from app.models import AnswerMeta, AnswerTrace, ChatSession, Message, User
+from app.models import AnswerMeta, AnswerTrace, ChatSession, Message, User, UserNotification
 
 # 1. FastAPI 앱 인스턴스 생성
 app = FastAPI(

@@ -1,0 +1,88 @@
+# answer_metas
+- meta_id INTEGER PK NOT NULL
+- message_id INTEGER NOT NULL
+- disclaimer TEXT
+- applied_rule TEXT
+- confidence_score FLOAT
+- created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  FKs:
+  - message_id -> messages.message_id (on_delete=NO ACTION, on_update=NO ACTION)
+
+# answer_traces
+- trace_id INTEGER PK NOT NULL
+- message_id INTEGER NOT NULL
+- chunk_id INTEGER
+- step_order INTEGER
+- logic_type VARCHAR
+- relevance_score FLOAT
+- created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  FKs:
+  - message_id -> messages.message_id (on_delete=NO ACTION, on_update=NO ACTION)
+
+# chat_sessions
+- chat_session_id CHAR(32) PK NOT NULL
+- user_id CHAR(32)
+- title VARCHAR
+- category VARCHAR
+- risk_level VARCHAR
+- summary TEXT
+- is_deleted BOOLEAN NOT NULL
+- created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+- updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  FKs:
+  - user_id -> users.user_id (on_delete=NO ACTION, on_update=NO ACTION)
+  Indexes:
+  - UNIQUE sqlite_autoindex_chat_sessions_1 (chat_session_id)
+
+# document_chunk_embeddings
+- chunk_id INTEGER PK NOT NULL
+- model_name VARCHAR NOT NULL
+- vector_json TEXT NOT NULL
+  FKs:
+  - chunk_id -> document_chunks.chunk_id (on_delete=NO ACTION, on_update=NO ACTION)
+
+# document_chunks
+- chunk_id INTEGER PK NOT NULL
+- document_id INTEGER NOT NULL
+- content TEXT NOT NULL
+- page_number INTEGER
+- article_number VARCHAR
+- source_type VARCHAR NOT NULL
+- category VARCHAR
+  FKs:
+  - document_id -> documents.document_id (on_delete=NO ACTION, on_update=NO ACTION)
+
+# documents
+- document_id INTEGER PK NOT NULL
+- title VARCHAR NOT NULL
+- source_type VARCHAR NOT NULL
+- source_file VARCHAR NOT NULL
+- category VARCHAR
+  Indexes:
+  - UNIQUE sqlite_autoindex_documents_1 (source_file)
+
+# messages
+- message_id INTEGER PK NOT NULL
+- chat_session_id CHAR(32) NOT NULL
+- message_index INTEGER NOT NULL
+- role VARCHAR NOT NULL
+- content TEXT NOT NULL
+- token_usage INTEGER
+- response_time_ms INTEGER
+- parent_message_id INTEGER
+- created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  FKs:
+  - parent_message_id -> messages.message_id (on_delete=NO ACTION, on_update=NO ACTION)
+  - chat_session_id -> chat_sessions.chat_session_id (on_delete=NO ACTION, on_update=NO ACTION)
+
+# users
+- user_id CHAR(32) PK NOT NULL
+- email VARCHAR NOT NULL
+- password_hash VARCHAR NOT NULL
+- nickname VARCHAR
+- is_active BOOLEAN NOT NULL
+- created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+- updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  Indexes:
+  - UNIQUE sqlite_autoindex_users_2 (email)
+  - UNIQUE sqlite_autoindex_users_1 (user_id)

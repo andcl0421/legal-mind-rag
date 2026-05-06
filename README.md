@@ -62,10 +62,11 @@
 | 영역 | 현재/계획 | 설명 |
 | :--- | :--- | :--- |
 | Backend | FastAPI, Pydantic, SQLAlchemy | API 및 데이터 모델 |
-| AI | LangChain, OpenAI 계열 모델 | 검색 기반 답변 생성 |
-| RAG | 법령/가이드라인/판례 문서 기반 검색 | 출처 포함 응답 |
+| AI | OpenAI API 기반 LLM 응답 생성 + 실패 시 템플릿 폴백 | 검색 근거를 입력으로 설명형 답변 생성 |
+| RAG | 법령/가이드라인/판례 문서 청크 검색 + 재랭킹 | 출처(citation), 면책, trace 포함 응답 |
+| Context | 최소 사용자 맥락 반영(사업장 규모/업종/고용형태/재직상태) | 질문 해석 및 답변 생성 프롬프트 보강 |
 | Relational DB | 현재 SQLite, 장기적으로 PostgreSQL 예정 | 현재 개발 편의 중심, 추후 확장 고려 |
-| Vector Store | 문서상 PostgreSQL + pgvector 방향 | 실제 구현은 아직 진행 중 |
+| Vector Store | 현재 임베딩 JSON 저장 + 코사인 유사도 검색, 장기적으로 pgvector | 현 단계는 점진적 고도화 진행 중 |
 
 ---
 
@@ -75,6 +76,11 @@
 - `chat_sessions`
 - `messages`
 - `answer_metas`
+- `answer_traces`
+- `users`
+- `documents`
+- `document_chunks`
+- `document_chunk_embeddings`
 
 문서에는 더 큰 전체 ERD가 포함되어 있지만, 그것은 서비스의 장기 설계도에 가깝습니다. 현재 코드는 채팅 상담 흐름부터 먼저 구현 중입니다.
 
@@ -138,8 +144,8 @@ legal-mind-rag/
 현재 문서와 코드, 그리고 코드 내부 모델 사이에는 아래 차이가 있습니다.
 
 1. 관계형 DB 설정은 SQLite인데 일부 모델은 PostgreSQL 전용 UUID 타입을 사용하고 있습니다.
-2. `chat_sessions.user_id`는 `users.user_id`를 참조하지만 현재 저장소에서는 `users` 모델이 보이지 않습니다.
-3. `Message.answer_traces` 관계는 선언돼 있지만 실제 `AnswerTrace` 모델은 주석 처리 상태입니다.
-4. 문서상 장기 ERD에는 `users`, `documents`, `document_chunks`, `user_notifications` 등 많은 테이블이 정의돼 있지만 현재 코드에는 아직 구현되지 않았습니다.
+2. 인증/알림(`auth.py`, `alerts.py`) 라우트는 아직 비어 있어, 장기 기능 문서 대비 API 구현이 진행 중입니다.
+3. 사용자 맥락(`company_size`, `industry`, `employment_type`, `employment_status`)은 요청/프롬프트 반영까지 구현되었지만, 별도 프로필 저장/규칙 엔진까지는 확장되지 않았습니다.
+4. 문서상 장기 ERD의 `user_notifications` 등 일부 테이블은 아직 코드에 구현되지 않았습니다.
 
 이 불일치는 설계 문서가 틀렸다는 뜻보다는, 문서가 장기 설계를 포함하고 있고 현재 구현은 상담 MVP 일부만 진행된 상태라는 뜻입니다.

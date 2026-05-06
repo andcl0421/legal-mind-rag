@@ -11,6 +11,14 @@ from app.schemas.chat import (
     ChatSessionSummaryResponse,
     StructuredAnswerResponse,
 )
+from app.schemas.auth import (
+    AuthResponse,
+    LoginRequest,
+    SignUpRequest,
+    TokenResponse,
+    UserProfileResponse,
+)
+from app.schemas.alerts import AlertCreateRequest, AlertListResponse, AlertResponse
 
 __all__ = [
     "ChatRequest",
@@ -24,4 +32,12 @@ __all__ = [
     "ChatSessionListResponse",
     "ChatSessionDetailResponse",
     "ChatMessageHistoryResponse",
+    "SignUpRequest",
+    "LoginRequest",
+    "TokenResponse",
+    "UserProfileResponse",
+    "AuthResponse",
+    "AlertCreateRequest",
+    "AlertResponse",
+    "AlertListResponse",
 ]

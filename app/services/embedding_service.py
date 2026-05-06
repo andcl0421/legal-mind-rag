@@ -43,7 +43,10 @@ def _openai_embed(text: str) -> tuple[str, list[float]]:
 def embed_text(text: str) -> tuple[str, list[float]]:
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
-        return _openai_embed(text)
+        try:
+            return _openai_embed(text)
+        except Exception:
+            return _fallback_embed(text)
     return _fallback_embed(text)
 
 

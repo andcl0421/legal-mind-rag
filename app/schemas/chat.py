@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     content: str = Field(..., min_length=1, description="사용자 상담 질문")
     chat_session_id: str | None = Field(default=None, description="기존 상담 세션 ID")
+    company_size: str | None = Field(default=None, description="사업장 규모 (예: 5인 미만, 5인 이상)")
+    industry: str | None = Field(default=None, description="업종 (예: 제조업, IT, 서비스업)")
+    employment_type: str | None = Field(default=None, description="고용 형태 (예: 정규직, 계약직, 파견)")
+    employment_status: str | None = Field(default=None, description="재직 상태 (예: 재직 중, 퇴사 예정, 퇴사)")
 
 
 class ChatMessageResponse(BaseModel):
@@ -29,9 +33,17 @@ class AnswerSourceResponse(BaseModel):
     relevance_score: float | None = None
 
 
+class AnswerSectionResponse(BaseModel):
+    heading: str
+    body: str
+    citation: str | None = None
+    source_chunk_ids: list[int] = Field(default_factory=list)
+
+
 class StructuredAnswerResponse(BaseModel):
     summary: str
     answer: str
+    answer_sections: list[AnswerSectionResponse]
     guidance: list[str]
     caution: str | None = None
     cited_rules: list[str]
@@ -50,6 +62,8 @@ class AnswerTraceResponse(BaseModel):
     step_order: int | None = None
     logic_type: str | None = None
     relevance_score: float | None = None
+    citation: str | None = None
+    source_label: str | None = None
 
 
 class ChatResponse(BaseModel):
