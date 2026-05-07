@@ -1,0 +1,11 @@
+{
+  "name": "legal-mind-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs 5173",
+    "build": "node -e \"console.log('Static frontend: build step not required')\"",
+    "preview": "node server.mjs 4173"
+  }
+}
