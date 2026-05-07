@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 import json
 import os
 import re
@@ -7,7 +8,7 @@ import uuid
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
-from app.models import AnswerMeta, AnswerTrace, ChatSession, Message
+from app.models import AnswerMeta, AnswerTrace, ChatSession, Message, UserNotification
 from app.schemas.chat import (
     AnswerMetaResponse,
     AnswerSectionResponse,
@@ -288,6 +289,132 @@ def _format_user_context_for_prompt(user_context: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def _parse_user_id(user_id: str | None) -> uuid.UUID | None:
+    if not user_id:
+        return None
+    try:
+        return uuid.UUID(str(user_id))
+    except ValueError:
+        return None
+
+
+def _extract_action_items(
+    category: str,
+    question: str,
+    structured_answer: StructuredAnswerResponse,
+) -> dict[str, list[str]]:
+    next_actions = [
+        "오늘 상담 내용을 기준으로 사실관계를 3줄로 정리하세요.",
+        "핵심 쟁점과 회사/근로자 입장을 분리해 메모해 두세요.",
+    ]
+    if structured_answer.guidance:
+        next_actions.extend(structured_answer.guidance[:2])
+
+    q = _normalize_space(question)
+    required_docs_by_intent = [
+        (
+            ("해고", "해고예고", "권고사직", "징계", "부당해고"),
+            ["해고통지서 또는 안내문", "인사평가/징계 관련 문서", "취업규칙(징계/해고 조항)", "근로계약서"],
+        ),
+        (
+            ("임금", "월급", "급여", "체불", "지연이자", "퇴직금", "주휴"),
+            ["근로계약서", "급여명세서", "임금지급내역(통장입금내역)", "출퇴근기록"],
+        ),
+        (
+            ("연차", "휴가", "휴일", "휴게", "근로시간", "연장근로"),
+            ["출퇴근기록", "근무표", "연차신청/승인기록", "취업규칙(휴가/근로시간 조항)"],
+        ),
+    ]
+    required_docs: list[str] | None = None
+    for keywords, docs in required_docs_by_intent:
+        if any(keyword in q for keyword in keywords):
+            required_docs = docs
+            break
+
+    if required_docs is None:
+        required_docs = {
+            "임금/수당": ["근로계약서", "급여명세서", "임금지급내역(통장입금내역)"],
+            "근로시간/휴가": ["출퇴근기록", "근무표", "연차신청/승인기록"],
+            "고용보장/해고": ["해고통지서 또는 안내문", "인사평가/징계 관련 문서", "근로계약서"],
+            "일·가정 양립": ["육아휴직 신청서", "회사 승인/거절 회신", "취업규칙 관련 조항"],
+        }.get(category, ["근로계약서", "회사 공지/안내문", "관련 대화 기록"])
+
+    deadlines: list[str] = []
+    if any(keyword in q for keyword in ("해고", "징계", "권고사직", "체불")):
+        deadlines.append("증빙 자료를 24시간 내 1차 정리")
+    if "연차" in q or "휴가" in q:
+        deadlines.append("휴가 관련 자료를 이번 주 내 정리")
+    if not deadlines:
+        deadlines.append("상담 후 3일 내 관련 자료를 정리")
+
+    return {
+        "next_actions": list(dict.fromkeys(next_actions[:3])),
+        "required_docs": required_docs,
+        "deadlines": deadlines,
+    }
+
+
+def _create_auto_notifications(
+    db: Session,
+    user_uuid: uuid.UUID | None,
+    chat_session_uuid: uuid.UUID,
+    category: str,
+    summary: str,
+    action_items: dict[str, list[str]],
+) -> None:
+    if user_uuid is None:
+        return
+
+    next_actions = action_items.get("next_actions", [])
+    required_docs = action_items.get("required_docs", [])
+    deadlines = action_items.get("deadlines", [])
+
+    summary_lines = [_clip_excerpt(_normalize_space(summary), limit=160)]
+    if next_actions:
+        summary_lines.append(f"우선순위 1: {next_actions[0]}")
+    if deadlines:
+        summary_lines.append(f"권장 기한: {deadlines[0]}")
+
+    summary_title = {
+        "고용보장/해고": "해고/징계 상담 요약",
+        "임금/수당": "임금 상담 요약",
+        "근로시간/휴가": "연차·근로시간 상담 요약",
+        "일·가정 양립": "육아·휴직 상담 요약",
+    }.get(category, "오늘 상담 요약")
+
+    summary_alert = UserNotification(
+        user_id=user_uuid,
+        title=summary_title,
+        content="\n".join(summary_lines),
+        source="chat_auto",
+        alert_type="summary",
+        chat_session_id=str(chat_session_uuid),
+        due_date=datetime.now(UTC) + timedelta(days=1),
+        is_read=False,
+    )
+    db.add(summary_alert)
+
+    docs_text = "확인 필요 서류:\n" + "\n".join(f"- {doc}" for doc in required_docs[:5])
+    docs_title = {
+        "고용보장/해고": "해고/징계 서류 체크",
+        "임금/수당": "임금 증빙 서류 체크",
+        "근로시간/휴가": "연차·근로시간 서류 체크",
+        "일·가정 양립": "육아·휴직 서류 체크",
+    }.get(category, "필요 서류 체크")
+
+    docs_alert = UserNotification(
+        user_id=user_uuid,
+        title=docs_title,
+        content=docs_text,
+        source="chat_auto",
+        alert_type="document",
+        chat_session_id=str(chat_session_uuid),
+        due_date=datetime.now(UTC) + timedelta(days=3),
+        is_read=False,
+    )
+    db.add(docs_alert)
+
+
 def _extract_json_payload(raw: str) -> dict[str, object] | None:
     if not raw:
         return None
@@ -535,6 +662,7 @@ def process_chat_message(
     db: Session,
     content: str,
     chat_session_id: str | None = None,
+    user_id: str | None = None,
     user_context: dict[str, str | None] | None = None,
 ) -> ChatResponse:
     content = content.strip()
@@ -551,8 +679,11 @@ def process_chat_message(
         raise ValueError("현재 검색 가능한 문서가 없어 상담 로직을 진행할 수 없습니다.")
     category = _choose_category(content, chunks)
     risk_level = _choose_risk_level(content)
+    user_uuid = _parse_user_id(user_id)
+
     if session is None:
         session = ChatSession(
+            user_id=user_uuid,
             title=_build_title(content, category),
             category=category,
             risk_level=risk_level,
@@ -565,6 +696,8 @@ def process_chat_message(
         session.risk_level = risk_level
         if not session.title:
             session.title = _build_title(content, category)
+        if session.user_id is None and user_uuid is not None:
+            session.user_id = user_uuid
 
     last_message = (
         db.query(Message)
@@ -620,6 +753,20 @@ def process_chat_message(
         )
         db.add(trace)
         traces.append(trace)
+
+    action_items = _extract_action_items(
+        category=category,
+        question=content,
+        structured_answer=structured_answer,
+    )
+    _create_auto_notifications(
+        db=db,
+        user_uuid=session.user_id or user_uuid,
+        chat_session_uuid=session.chat_session_id,
+        category=category,
+        summary=structured_answer.summary,
+        action_items=action_items,
+    )
 
     db.commit()
 

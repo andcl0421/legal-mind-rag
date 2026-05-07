@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     content: str = Field(..., min_length=1, description="사용자 상담 질문")
     chat_session_id: str | None = Field(default=None, description="기존 상담 세션 ID")
+    user_id: str | None = Field(default=None, description="로그인 사용자 ID (자동 알림 연결용)")
     company_size: str | None = Field(default=None, description="사업장 규모 (예: 5인 미만, 5인 이상)")
     industry: str | None = Field(default=None, description="업종 (예: 제조업, IT, 서비스업)")
     employment_type: str | None = Field(default=None, description="고용 형태 (예: 정규직, 계약직, 파견)")

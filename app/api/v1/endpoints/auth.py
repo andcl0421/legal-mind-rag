@@ -14,6 +14,7 @@ from app.schemas import AuthResponse, LoginRequest, SignUpRequest, TokenResponse
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
+ALLOWED_EMP_COUNT_TYPES = {"UNDER_5", "OVER_5", "OVER_30", "OVER_300"}
 
 
 @router.get("/health")
@@ -60,10 +61,23 @@ def _serialize_user(user: User) -> UserProfileResponse:
         user_id=str(user.user_id),
         email=user.email,
         nickname=user.nickname,
+        emp_count_type=user.emp_count_type,
+        region_code=user.region_code,
         is_active=user.is_active,
+        last_login_at=user.last_login_at,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
+
+
+def _normalize_emp_count_type(raw: str) -> str:
+    value = raw.strip().upper()
+    if value not in ALLOWED_EMP_COUNT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="emp_count_type은 UNDER_5, OVER_5, OVER_30, OVER_300 중 하나여야 합니다.",
+        )
+    return value
 
 
 def _get_current_user(
@@ -91,6 +105,7 @@ def _get_current_user(
 @router.post("/signup", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 def sign_up(payload: SignUpRequest, db: Session = Depends(get_db)):
     email = _normalize_email(payload.email)
+    emp_count_type = _normalize_emp_count_type(payload.emp_count_type)
     existing = db.query(User).filter(User.email == email).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 가입된 이메일입니다.")
@@ -99,6 +114,8 @@ def sign_up(payload: SignUpRequest, db: Session = Depends(get_db)):
         email=email,
         password_hash=_hash_password(payload.password),
         nickname=payload.nickname,
+        emp_count_type=emp_count_type,
+        region_code=payload.region_code,
         is_active=True,
     )
     db.add(user)
@@ -116,6 +133,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비활성 사용자입니다.")
+
+    user.last_login_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(user)
 
     return AuthResponse(user=_serialize_user(user), token=_build_token(user))
 

@@ -25,6 +25,10 @@ def _serialize_alert(item: UserNotification) -> AlertResponse:
         user_notif_id=item.user_notif_id,
         title=item.title,
         content=item.content,
+        source=item.source or "manual",
+        alert_type=item.alert_type,
+        chat_session_id=item.chat_session_id,
+        due_date=item.due_date,
         is_read=item.is_read,
         created_at=item.created_at,
         read_at=item.read_at,
@@ -64,6 +68,9 @@ def create_alert(
         user_id=user.user_id,
         title=payload.title.strip(),
         content=payload.content.strip(),
+        source="manual",
+        alert_type="manual_note",
+        due_date=payload.due_date,
         is_read=False,
     )
     db.add(row)
@@ -75,6 +82,7 @@ def create_alert(
 @router.get("", response_model=AlertListResponse)
 def list_alerts(
     unread_only: bool = Query(default=False),
+    source: str | None = Query(default=None, pattern="^(manual|chat_auto)$"),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
@@ -83,6 +91,8 @@ def list_alerts(
     query = db.query(UserNotification).filter(UserNotification.user_id == user.user_id)
     if unread_only:
         query = query.filter(UserNotification.is_read.is_(False))
+    if source:
+        query = query.filter(UserNotification.source == source)
     items = query.order_by(UserNotification.created_at.desc()).limit(limit).all()
     return AlertListResponse(items=[_serialize_alert(item) for item in items])
 
