@@ -16,5 +16,5 @@ export function sendChat(payload) {
   return api("/chat", {
     method: "POST",
     body: JSON.stringify(payload),
-  });
+  }, true);
 }
