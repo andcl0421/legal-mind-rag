@@ -14,6 +14,7 @@ from app.schemas.chat import (
 from app.schemas.auth import (
     AuthResponse,
     LoginRequest,
+    ProfileUpdateRequest,
     SignUpRequest,
     TokenResponse,
     UserProfileResponse,
@@ -34,6 +35,7 @@ __all__ = [
     "ChatMessageHistoryResponse",
     "SignUpRequest",
     "LoginRequest",
+    "ProfileUpdateRequest",
     "TokenResponse",
     "UserProfileResponse",
     "AuthResponse",

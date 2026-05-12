@@ -25,6 +25,14 @@ export default function App() {
   const ActiveComponent = useMemo(() => pages[activePage].component, [activePage]);
   const authed = Boolean(store.token);
 
+  function navigateTo(pageKey) {
+    if (pageKey === "mypage" && !authed) {
+      setActivePage("login");
+      return;
+    }
+    setActivePage(pageKey);
+  }
+
   useEffect(() => {
     if (!store.token) return;
     fetchMe()
@@ -49,7 +57,7 @@ export default function App() {
         <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
           <button
             type="button"
-            onClick={() => setActivePage("home")}
+            onClick={() => navigateTo("home")}
             className="flex min-w-0 items-center gap-2 rounded-full text-left"
           >
             <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-nomu-soft ring-1 ring-nomu-line">
@@ -63,12 +71,12 @@ export default function App() {
 
           <nav className="hidden items-center gap-8 text-sm font-bold text-[#657464] md:flex">
             {Object.entries(pages)
-              .filter(([key]) => (authed ? key !== "login" && key !== "signup" : key !== "mypage"))
+              .filter(([key]) => key !== "login" && key !== "signup")
               .map(([key, page]) => (
               <button
                 key={key}
                 type="button"
-                onClick={() => setActivePage(key)}
+                onClick={() => navigateTo(key)}
                 className={`border-b-2 px-1 py-3 transition ${
                   activePage === key ? "border-nomu-main text-nomu-dark" : "border-transparent hover:text-nomu-dark"
                 }`}
@@ -79,10 +87,10 @@ export default function App() {
           </nav>
 
           <div className="flex items-center gap-2 text-nomu-dark">
-            <button type="button" className="grid h-9 w-9 place-items-center rounded-full border border-nomu-line bg-white">
+            <button type="button" onClick={() => navigateTo("mypage")} className="grid h-9 w-9 place-items-center rounded-full border border-nomu-line bg-white">
               <Bell size={18} />
             </button>
-            <button type="button" className="grid h-9 w-9 place-items-center rounded-full border border-nomu-line bg-white">
+            <button type="button" onClick={() => navigateTo("mypage")} className="grid h-9 w-9 place-items-center rounded-full border border-nomu-line bg-white">
               <UserRound size={18} />
             </button>
             {authed ? (
@@ -95,9 +103,22 @@ export default function App() {
                 </button>
               </>
             ) : (
-              <button type="button" onClick={() => setActivePage("login")} className="rounded-full bg-nomu-dark px-4 py-2 text-xs font-extrabold text-white">
-                로그인
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setActivePage("login")}
+                  className="rounded-full border border-nomu-line bg-white px-4 py-2 text-xs font-extrabold text-nomu-dark"
+                >
+                  로그인
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActivePage("signup")}
+                  className="rounded-full bg-nomu-dark px-4 py-2 text-xs font-extrabold text-white"
+                >
+                  회원가입
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -110,15 +131,15 @@ export default function App() {
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-nomu-line bg-white/95 px-3 py-2 shadow-[0_-10px_28px_rgba(52,83,56,0.08)] backdrop-blur md:hidden">
         <div className="mx-auto grid max-w-md grid-cols-4 gap-1">
           {Object.entries(pages)
-            .filter(([key]) => ["home", "chat", "history", authed ? "mypage" : "login"].includes(key))
+            .filter(([key]) => ["home", "chat", "history", "mypage"].includes(key))
             .map(([key, page]) => {
             const Icon = page.icon;
-            const isActive = activePage === key;
+            const isActive = activePage === key || (!authed && key === "mypage" && activePage === "login");
             return (
               <button
                 key={key}
                 type="button"
-                onClick={() => setActivePage(key)}
+                onClick={() => navigateTo(key)}
                 className={`flex h-14 flex-col items-center justify-center gap-1 rounded-2xl text-xs font-bold transition ${
                   isActive ? "bg-nomu-soft text-nomu-dark" : "text-[#7B8878]"
                 }`}

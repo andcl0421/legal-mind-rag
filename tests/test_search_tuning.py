@@ -4,6 +4,7 @@ from app.services.knowledge_base import (
     KnowledgeChunk,
     _score_context_signals,
     _score_strict_intent_alignment,
+    search_knowledge,
 )
 
 
@@ -83,6 +84,22 @@ class SearchTuningTests(unittest.TestCase):
         )
         context = {"employment_status": "재직 중", "industry": "서비스업", "topic": "육아휴직"}
         self.assertGreater(_score_context_signals(chunk_family, context), _score_context_signals(chunk_wage, context))
+
+    def test_search_prioritizes_maternity_protection_for_birth_disadvantage(self):
+        results = search_knowledge("출산에 대한 부당대우를 받고 있어요", top_k=3)
+
+        self.assertGreaterEqual(len(results), 1)
+        top_chunk = results[0][0]
+        self.assertEqual(top_chunk.article_number, "제74조")
+        self.assertEqual(top_chunk.category, "일·가정 양립")
+        self.assertIn("임산부의 보호", top_chunk.content)
+
+    def test_search_does_not_overfocus_dormitory_when_birth_is_primary_issue(self):
+        results = search_knowledge("출산휴가를 쓰려는데 기숙사에서 나가라고 부당대우를 합니다", top_k=3)
+
+        self.assertGreaterEqual(len(results), 1)
+        self.assertEqual(results[0][0].article_number, "제74조")
+        self.assertFalse(any("기숙사" in chunk.content for chunk, _score in results[:3]))
 
 
 if __name__ == "__main__":

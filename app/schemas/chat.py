@@ -26,6 +26,7 @@ class AnswerSourceResponse(BaseModel):
     chunk_id: int | None = None
     title: str | None = None
     source_file: str | None = None
+    document_path: str | None = None
     article_number: str | None = None
     page_number: int | None = None
     source_label: str | None = None
@@ -87,6 +88,8 @@ class ChatSessionSummaryResponse(BaseModel):
     risk_level: str | None = None
     summary: str | None = None
     last_message_preview: str | None = None
+    latest_primary_citation: str | None = None
+    latest_source_label: str | None = None
     message_count: int
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -105,6 +108,10 @@ class ChatSessionDetailResponse(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     messages: list[ChatMessageResponse]
+    latest_sources: list[AnswerSourceResponse] = Field(default_factory=list)
+    latest_answer_meta: AnswerMetaResponse | None = None
+    latest_answer_traces: list[AnswerTraceResponse] = Field(default_factory=list)
+    latest_primary_citation: str | None = None
 
 
 class ChatMessageHistoryResponse(BaseModel):

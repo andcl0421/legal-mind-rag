@@ -1,8 +1,10 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 import json
 import os
 import re
+from urllib.parse import quote
 import uuid
 
 from openai import OpenAI
@@ -22,7 +24,7 @@ from app.schemas.chat import (
     ChatSessionSummaryResponse,
     StructuredAnswerResponse,
 )
-from app.services.knowledge_base import KnowledgeChunk, search_knowledge
+from app.services.knowledge_base import KnowledgeChunk, load_knowledge_base, search_knowledge
 
 
 DISCLAIMER = (
@@ -39,8 +41,25 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "임금/수당": ("임금", "월급", "급여", "수당", "체불", "지연이자", "임금명세서", "퇴직금", "주휴"),
     "근로시간/휴가": ("연차", "휴가", "휴일", "휴게", "근로시간", "야근", "연장근로"),
     "고용보장/해고": ("해고", "해고예고", "권고사직", "징계", "부당해고", "서면통지", "전직", "감봉"),
-    "일·가정 양립": ("육아휴직", "육아", "임신", "출산", "복직", "단축근무", "출산전후휴가"),
+    "일·가정 양립": ("육아휴직", "육아", "임신", "출산", "복직", "단축근무", "출산전후휴가", "부당대우", "불리한 처우"),
 }
+
+_FOLLOW_UP_HINTS = (
+    "그럼",
+    "그러면",
+    "이제",
+    "뭐부터",
+    "먼저",
+    "어떻게",
+    "다음",
+    "필요한 서류",
+    "필요서류",
+    "준비 서류",
+    "무슨 서류",
+    "증거",
+    "신고",
+    "회사에 뭐라고",
+)
 
 
 def _choose_category(question: str, chunks: Sequence[tuple[KnowledgeChunk, float]]) -> str:
@@ -62,8 +81,8 @@ def _choose_category(question: str, chunks: Sequence[tuple[KnowledgeChunk, float
 
 
 def _choose_risk_level(question: str) -> str:
-    urgent_keywords = ("해고", "징계", "체불", "권고사직", "불이익", "전직", "감봉")
-    caution_keywords = ("휴게", "휴일", "퇴직금", "주휴", "육아휴직")
+    urgent_keywords = ("해고", "징계", "체불", "권고사직", "불이익", "부당대우", "불리한 처우", "전직", "감봉")
+    caution_keywords = ("휴게", "휴일", "퇴직금", "주휴", "육아휴직", "출산전후휴가")
     if any(keyword in question for keyword in urgent_keywords):
         return "주의"
     if any(keyword in question for keyword in caution_keywords):
@@ -75,6 +94,32 @@ def _build_title(question: str, category: str) -> str:
     compact = question.strip().replace("\n", " ")
     compact = compact[:24] + "..." if len(compact) > 24 else compact
     return f"{category} 상담 - {compact}"
+
+
+def _is_follow_up_question(question: str) -> bool:
+    normalized = _normalize_space(question)
+    if any(hint in normalized for hint in _FOLLOW_UP_HINTS):
+        return True
+    return len(normalized) <= 24 and normalized.endswith(("?", "요", "죠", "가요", "할까요"))
+
+
+def _build_search_query(
+    question: str,
+    session: ChatSession | None,
+) -> str:
+    normalized_question = _normalize_space(question)
+    if session is None or not _is_follow_up_question(normalized_question):
+        return normalized_question
+
+    ordered_messages = sorted(session.messages, key=lambda item: item.message_index)
+    recent_user_messages = [
+        _normalize_space(message.content)
+        for message in ordered_messages
+        if message.role == "user" and _normalize_space(message.content) != normalized_question
+    ]
+    prior_user_context = recent_user_messages[-2:]
+    context_parts = [part for part in [session.category, *prior_user_context, normalized_question] if part]
+    return " / ".join(dict.fromkeys(context_parts))
 
 
 def _serialize_message(message: Message) -> ChatMessageResponse:
@@ -173,6 +218,12 @@ def _build_citation(chunk: KnowledgeChunk) -> str:
     return base_title
 
 
+def _build_document_path(source_file: str | None) -> str | None:
+    if not source_file or str(source_file).startswith("seed:"):
+        return None
+    return f"/api/v1/chat/documents/view?source_file={quote(str(source_file))}"
+
+
 def _build_guidance(chunks: Sequence[tuple[KnowledgeChunk, float]]) -> list[str]:
     guidance = [
         "질문과 직접 관련된 근로계약서, 취업규칙, 급여명세서를 함께 확인해 보시는 것이 좋습니다.",
@@ -245,6 +296,7 @@ def _build_assistant_text(
     guidance: list[str],
     primary_citation: str | None,
     question: str,
+    action_items: dict[str, list[str]] | None = None,
 ) -> str:
     lines = [summary]
     for section in answer_sections:
@@ -252,6 +304,16 @@ def _build_assistant_text(
         if section.citation:
             lines.append(f"근거: {section.citation}")
     lines.extend(["", "참고하실 점", *(f"- {item}" for item in guidance)])
+    if action_items:
+        next_actions = action_items.get("next_actions", [])
+        required_docs = action_items.get("required_docs", [])
+        deadlines = action_items.get("deadlines", [])
+        if next_actions:
+            lines.extend(["", "먼저 할 일", *(f"- {item}" for item in next_actions[:3])])
+        if required_docs:
+            lines.extend(["", "준비할 서류", *(f"- {item}" for item in required_docs[:5])])
+        if deadlines:
+            lines.extend(["", "권장 기한", *(f"- {item}" for item in deadlines[:3])])
     if primary_citation:
         lines.extend(["", f"주요 근거 조문: {primary_citation}"])
     lines.extend(["", f"질문 내용: {question}"])
@@ -547,7 +609,7 @@ def _build_structured_answer(
     category: str,
     chunks: Sequence[tuple[KnowledgeChunk, float]],
     user_context: dict[str, str] | None = None,
-) -> tuple[StructuredAnswerResponse, str | None, float, str]:
+) -> tuple[StructuredAnswerResponse, str | None, float, str, dict[str, list[str]]]:
     primary_chunk, primary_score = chunks[0]
     primary_citation = _build_citation(primary_chunk)
     applied_rule = primary_citation
@@ -630,19 +692,10 @@ def _build_structured_answer(
         for chunk, score in chunks
     ]
 
-    assistant_text = _build_assistant_text(
-        summary=summary,
-        answer_sections=answer_sections,
-        guidance=guidance,
-        primary_citation=primary_citation,
+    action_items = _extract_action_items(
+        category=category,
         question=question,
-    )
-    if user_context:
-        context_lines = [f"- {key}: {value}" for key, value in user_context.items()]
-        assistant_text = f"{assistant_text}\n\n사용자 맥락\n" + "\n".join(context_lines)
-
-    return (
-        StructuredAnswerResponse(
+        structured_answer=StructuredAnswerResponse(
             summary=summary,
             answer=answer,
             answer_sections=answer_sections,
@@ -652,9 +705,37 @@ def _build_structured_answer(
             primary_citation=primary_citation,
             sources=sources,
         ),
+    )
+
+    assistant_text = _build_assistant_text(
+        summary=summary,
+        answer_sections=answer_sections,
+        guidance=guidance,
+        primary_citation=primary_citation,
+        question=question,
+        action_items=action_items,
+    )
+    if user_context:
+        context_lines = [f"- {key}: {value}" for key, value in user_context.items()]
+        assistant_text = f"{assistant_text}\n\n사용자 맥락\n" + "\n".join(context_lines)
+
+    structured_response = StructuredAnswerResponse(
+        summary=summary,
+        answer=answer,
+        answer_sections=answer_sections,
+        guidance=guidance,
+        caution=caution,
+        cited_rules=cited_rules,
+        primary_citation=primary_citation,
+        sources=sources,
+    )
+
+    return (
+        structured_response,
         applied_rule,
         round(max(primary_score, 0.3), 2),
         assistant_text,
+        action_items,
     )
 
 
@@ -674,7 +755,8 @@ def process_chat_message(
         session = db.query(ChatSession).filter(ChatSession.chat_session_id == chat_session_id).first()
 
     normalized_context = _normalize_user_context(user_context)
-    chunks = search_knowledge(content, top_k=3, user_context=normalized_context)
+    search_query = _build_search_query(content, session)
+    chunks = search_knowledge(search_query, top_k=3, user_context=normalized_context)
     if not chunks:
         raise ValueError("현재 검색 가능한 문서가 없어 상담 로직을 진행할 수 없습니다.")
     category = _choose_category(content, chunks)
@@ -716,7 +798,7 @@ def process_chat_message(
     db.add(user_message)
     db.flush()
 
-    structured_answer, applied_rule, confidence_score, answer_text = _build_structured_answer(
+    structured_answer, applied_rule, confidence_score, answer_text, action_items = _build_structured_answer(
         content,
         category,
         chunks,
@@ -754,11 +836,6 @@ def process_chat_message(
         db.add(trace)
         traces.append(trace)
 
-    action_items = _extract_action_items(
-        category=category,
-        question=content,
-        structured_answer=structured_answer,
-    )
     _create_auto_notifications(
         db=db,
         user_uuid=session.user_id or user_uuid,
@@ -813,6 +890,8 @@ def list_chat_sessions(db: Session) -> ChatSessionListResponse:
     for session in sessions:
         messages = sorted(session.messages, key=lambda item: item.message_index)
         last_message = messages[-1] if messages else None
+        latest_assistant = next((message for message in reversed(messages) if message.role == "assistant"), None)
+        latest_sources = _build_sources_from_traces(latest_assistant.answer_traces) if latest_assistant is not None else []
         items.append(
             ChatSessionSummaryResponse(
                 chat_session_id=str(session.chat_session_id),
@@ -821,6 +900,8 @@ def list_chat_sessions(db: Session) -> ChatSessionListResponse:
                 risk_level=session.risk_level,
                 summary=session.summary,
                 last_message_preview=_build_message_preview(last_message),
+                latest_primary_citation=latest_sources[0].citation if latest_sources else None,
+                latest_source_label=latest_sources[0].source_label if latest_sources else None,
                 message_count=len(messages),
                 created_at=session.created_at,
                 updated_at=session.updated_at,
@@ -828,6 +909,218 @@ def list_chat_sessions(db: Session) -> ChatSessionListResponse:
         )
 
     return ChatSessionListResponse(sessions=items)
+
+
+def _chunk_index() -> dict[int, KnowledgeChunk]:
+    return {chunk.chunk_id: chunk for chunk in load_knowledge_base()}
+
+
+def _build_sources_from_traces(traces: Sequence[AnswerTrace]) -> list[AnswerSourceResponse]:
+    chunk_index = _chunk_index()
+    sources: list[AnswerSourceResponse] = []
+    for trace in sorted(traces, key=lambda item: (item.step_order or 9999, item.trace_id)):
+        if trace.chunk_id is None:
+            continue
+        chunk = chunk_index.get(trace.chunk_id)
+        if chunk is None:
+            continue
+        sources.append(
+            AnswerSourceResponse(
+                chunk_id=chunk.chunk_id,
+                title=chunk.title,
+                source_file=chunk.source_file,
+                document_path=_build_document_path(chunk.source_file),
+                article_number=chunk.article_number,
+                page_number=chunk.page_number,
+                source_label=_build_source_label(chunk),
+                citation=_build_citation(chunk),
+                excerpt=_extract_focus_excerpt(chunk),
+                relevance_score=trace.relevance_score,
+            )
+        )
+    return sources
+
+
+def _build_trace_responses(traces: Sequence[AnswerTrace]) -> list[AnswerTraceResponse]:
+    chunk_index = _chunk_index()
+    items: list[AnswerTraceResponse] = []
+    for trace in sorted(traces, key=lambda item: (item.step_order or 9999, item.trace_id)):
+        chunk = chunk_index.get(trace.chunk_id) if trace.chunk_id is not None else None
+        items.append(
+            AnswerTraceResponse(
+                chunk_id=trace.chunk_id,
+                step_order=trace.step_order,
+                logic_type=trace.logic_type,
+                relevance_score=trace.relevance_score,
+                citation=_build_citation(chunk) if chunk is not None else None,
+                source_label=_build_source_label(chunk) if chunk is not None else None,
+            )
+        )
+    return items
+
+
+def _wrap_report_text(text: str, limit: int = 34) -> list[str]:
+    normalized = _normalize_space(text)
+    if not normalized:
+        return []
+    words = normalized.split(" ")
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+            current = ""
+        while len(word) > limit:
+            lines.append(word[:limit])
+            word = word[limit:]
+        current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _pdf_hex_text(text: str) -> str:
+    return text.encode("utf-16-be").hex().upper()
+
+
+def _build_simple_pdf(pages: list[list[str]]) -> bytes:
+    objects: list[bytes] = []
+
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+
+    page_object_numbers = [5 + index * 2 for index in range(len(pages))]
+    kids = " ".join(f"{number} 0 R" for number in page_object_numbers)
+    objects.append(f"<< /Type /Pages /Count {len(pages)} /Kids [{kids}] >>".encode("ascii"))
+
+    objects.append(
+        b"<< /Type /Font /Subtype /Type0 /BaseFont /HYGoThic-Medium /Encoding /UniKS-UCS2-H /DescendantFonts [4 0 R] >>"
+    )
+    objects.append(
+        b"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /HYGoThic-Medium /CIDSystemInfo << /Registry (Adobe) /Ordering (Korea1) /Supplement 1 >> /DW 1000 >>"
+    )
+
+    for page_index, lines in enumerate(pages):
+        page_number = 5 + page_index * 2
+        content_number = page_number + 1
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents {content_number} 0 R >>".encode(
+                "ascii"
+            )
+        )
+        content_lines = ["BT", "/F1 11 Tf", "15 TL"]
+        y = 790
+        for line in lines:
+            safe_line = _pdf_hex_text(line)
+            content_lines.append(f"1 0 0 1 48 {y} Tm <{safe_line}> Tj")
+            y -= 18
+        content_lines.append("ET")
+        stream = "\n".join(content_lines).encode("ascii")
+        objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+
+    buffer = BytesIO()
+    buffer.write(b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(buffer.tell())
+        buffer.write(f"{index} 0 obj\n".encode("ascii"))
+        buffer.write(obj)
+        buffer.write(b"\nendobj\n")
+
+    xref_pos = buffer.tell()
+    buffer.write(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    buffer.write(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        buffer.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+    buffer.write(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF".encode("ascii")
+    )
+    return buffer.getvalue()
+
+
+def generate_chat_session_report(db: Session, chat_session_id: str, requester_user_id: str) -> tuple[str, bytes]:
+    session_uuid = _parse_chat_session_id(chat_session_id)
+    requester_uuid = _parse_user_id(requester_user_id)
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.chat_session_id == session_uuid,
+            ChatSession.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if session is None:
+        raise ValueError("해당 상담 세션을 찾을 수 없습니다.")
+    if requester_uuid is None:
+        raise ValueError("유효한 사용자 정보가 필요합니다.")
+    if session.user_id is not None and session.user_id != requester_uuid:
+        raise ValueError("리포트를 내려받을 권한이 없는 상담 세션입니다.")
+
+    ordered_messages = sorted(session.messages, key=lambda item: item.message_index)
+    latest_assistant = next((message for message in reversed(ordered_messages) if message.role == "assistant"), None)
+    latest_user = next((message for message in reversed(ordered_messages) if message.role == "user"), None)
+    latest_sources = _build_sources_from_traces(latest_assistant.answer_traces) if latest_assistant is not None else []
+
+    raw_lines = [
+        "노무톡톡 상담 리포트",
+        "",
+        f"상담 제목: {session.title or '노무 상담'}",
+        f"생성일: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"카테고리: {session.category or 'AI 상담'}",
+        f"위험도: {session.risk_level or '-'}",
+        "",
+        "상담 요약",
+        session.summary or "저장된 요약이 없습니다.",
+        "",
+        "최근 사용자 질문",
+        latest_user.content if latest_user is not None else "기록이 없습니다.",
+        "",
+        "최근 AI 답변",
+        latest_assistant.content if latest_assistant is not None else "기록이 없습니다.",
+        "",
+        "핵심 근거",
+    ]
+    if latest_sources:
+        for source in latest_sources[:5]:
+            raw_lines.append(f"- {source.citation or source.title or '참조문서'}")
+            if source.source_label:
+                raw_lines.append(f"  출처: {source.source_label}")
+            if source.excerpt:
+                raw_lines.append(f"  발췌: {source.excerpt}")
+    else:
+        raw_lines.append("저장된 근거 정보가 없습니다.")
+
+    raw_lines.extend(
+        [
+            "",
+            "안내",
+            DISCLAIMER,
+        ]
+    )
+
+    flattened_lines: list[str] = []
+    for entry in raw_lines:
+        if entry == "":
+            flattened_lines.append("")
+            continue
+        flattened_lines.extend(_wrap_report_text(entry))
+
+    pages: list[list[str]] = []
+    current_page: list[str] = []
+    for line in flattened_lines:
+        if len(current_page) >= 38:
+            pages.append(current_page)
+            current_page = []
+        current_page.append(line)
+    if current_page:
+        pages.append(current_page)
+
+    pdf_bytes = _build_simple_pdf(pages or [["노무톡톡 상담 리포트"]])
+    filename = f"nomutalktalk-report-{str(session.chat_session_id)[:8]}.pdf"
+    return filename, pdf_bytes
 
 
 def get_chat_session_detail(db: Session, chat_session_id: str) -> ChatSessionDetailResponse:
@@ -844,6 +1137,23 @@ def get_chat_session_detail(db: Session, chat_session_id: str) -> ChatSessionDet
         raise ValueError("해당 상담 세션을 찾을 수 없습니다.")
 
     ordered_messages = sorted(session.messages, key=lambda item: item.message_index)
+    latest_assistant = next((message for message in reversed(ordered_messages) if message.role == "assistant"), None)
+    latest_sources: list[AnswerSourceResponse] = []
+    latest_answer_meta = None
+    latest_answer_traces: list[AnswerTraceResponse] = []
+    latest_primary_citation = None
+
+    if latest_assistant is not None:
+        latest_sources = _build_sources_from_traces(latest_assistant.answer_traces)
+        latest_answer_traces = _build_trace_responses(latest_assistant.answer_traces)
+        latest_primary_citation = latest_sources[0].citation if latest_sources else None
+        if latest_assistant.answer_meta is not None:
+            latest_answer_meta = AnswerMetaResponse(
+                disclaimer=latest_assistant.answer_meta.disclaimer,
+                applied_rule=latest_assistant.answer_meta.applied_rule,
+                confidence_score=latest_assistant.answer_meta.confidence_score,
+            )
+
     return ChatSessionDetailResponse(
         chat_session_id=str(session.chat_session_id),
         title=session.title,
@@ -853,6 +1163,10 @@ def get_chat_session_detail(db: Session, chat_session_id: str) -> ChatSessionDet
         created_at=session.created_at,
         updated_at=session.updated_at,
         messages=[_serialize_message(message) for message in ordered_messages],
+        latest_sources=latest_sources,
+        latest_answer_meta=latest_answer_meta,
+        latest_answer_traces=latest_answer_traces,
+        latest_primary_citation=latest_primary_citation,
     )
 
 
@@ -874,3 +1188,28 @@ def get_chat_message_history(db: Session, chat_session_id: str) -> ChatMessageHi
         chat_session_id=str(session.chat_session_id),
         messages=[_serialize_message(message) for message in ordered_messages],
     )
+
+
+def delete_chat_session(db: Session, chat_session_id: str, requester_user_id: str) -> dict[str, str]:
+    session_uuid = _parse_chat_session_id(chat_session_id)
+    requester_uuid = _parse_user_id(requester_user_id)
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.chat_session_id == session_uuid,
+            ChatSession.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if session is None:
+        raise ValueError("해당 상담 세션을 찾을 수 없습니다.")
+
+    if requester_uuid is None:
+        raise ValueError("유효한 사용자 정보가 필요합니다.")
+
+    if session.user_id is not None and session.user_id != requester_uuid:
+        raise ValueError("삭제할 수 없는 상담 세션입니다.")
+
+    session.is_deleted = True
+    db.commit()
+    return {"status": "deleted", "chat_session_id": str(session.chat_session_id)}

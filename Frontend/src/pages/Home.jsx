@@ -1,4 +1,5 @@
 import { ArrowRight, ClipboardCheck, MessageCircle, Sparkles } from "lucide-react";
+import { useState } from "react";
 import mungiHome from "../assets/mungi/mungi-home.png";
 import mungiTalkCard from "../assets/mungi/mungi-talk-card.png";
 
@@ -11,6 +12,7 @@ const moodItems = [
 ];
 
 export default function Home({ goTo }) {
+  const [selectedMood, setSelectedMood] = useState("보통");
   return (
     <div className="grid gap-5">
       <section className="nomu-card relative min-h-[46vh] overflow-hidden bg-gradient-to-br from-[#F6FBED] via-white to-[#EEF7E5] p-6 sm:p-8 lg:p-12">
@@ -57,13 +59,19 @@ export default function Home({ goTo }) {
               <button
                 key={item.label}
                 type="button"
-                className="grid min-h-24 place-items-center rounded-3xl border border-nomu-line bg-[#FBFDF8] p-2 transition hover:border-nomu-main hover:bg-nomu-soft"
+                onClick={() => setSelectedMood(item.label)}
+                className={`grid min-h-24 place-items-center rounded-3xl border p-2 transition ${
+                  selectedMood === item.label
+                    ? "border-nomu-main bg-nomu-soft"
+                    : "border-nomu-line bg-[#FBFDF8] hover:border-nomu-main hover:bg-nomu-soft"
+                }`}
               >
                 <span className="text-3xl">{item.emoji}</span>
                 <span className="mt-2 text-center text-xs font-bold text-[#566453]">{item.label}</span>
               </button>
             ))}
           </div>
+          <p className="mt-4 text-xs font-bold text-[#6F806C]">선택됨: {selectedMood}</p>
         </article>
 
         <article className="nomu-card relative overflow-hidden p-5 sm:p-6 xl:p-8">

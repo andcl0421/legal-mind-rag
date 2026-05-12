@@ -16,6 +16,12 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
 
 
+class ProfileUpdateRequest(BaseModel):
+    nickname: str | None = Field(default=None, max_length=50)
+    emp_count_type: str = Field(..., min_length=1, max_length=50)
+    region_code: str | None = Field(default=None, max_length=10)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

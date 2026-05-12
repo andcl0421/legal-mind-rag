@@ -26,3 +26,16 @@ export async function fetchMe() {
   setUser(data);
   return data;
 }
+
+export async function updateMe(payload) {
+  const data = await api(
+    "/auth/me",
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+    true,
+  );
+  setUser(data);
+  return data;
+}

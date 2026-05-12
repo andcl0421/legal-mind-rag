@@ -108,6 +108,32 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
 
 _LEGAL_TOPIC_SIGNALS: tuple[dict[str, object], ...] = (
     {
+        "question_terms": (
+            "출산",
+            "출산휴가",
+            "출산 휴가",
+            "출산전후휴가",
+            "임신",
+            "임산부",
+            "산전후휴가",
+            "부당대우",
+            "불이익",
+            "불리한 처우",
+        ),
+        "support_terms": (
+            "임산부의 보호",
+            "임산부",
+            "출산전후휴가",
+            "임신 중",
+            "산후",
+            "불이익 금지",
+            "불리한 처우",
+            "제74조",
+            "제74조의2",
+        ),
+        "article_refs": ("제74조", "제74조의2"),
+    },
+    {
         "question_terms": ("해고예고", "해고 예고", "예고수당"),
         "support_terms": ("해고의 예고", "30일 전에 예고", "30일분 이상의 통상임금", "제26조"),
         "article_refs": ("제26조",),
@@ -139,7 +165,7 @@ _LEGAL_TOPIC_SIGNALS: tuple[dict[str, object], ...] = (
     },
     {
         "question_terms": ("출산전후휴가", "출산 휴가", "출산휴가"),
-        "support_terms": ("출산전후휴가", "90일", "100일", "120일", "제74조"),
+        "support_terms": ("출산전후휴가", "임산부의 보호", "90일", "100일", "120일", "제74조"),
         "article_refs": ("제74조",),
     },
     {
@@ -225,6 +251,25 @@ def _choose_category(text: str) -> str:
     return best_category if scores[best_category] > 0 else "일반 상담"
 
 
+def _normalize_chunk_category(category: str, content: str, article_number: str | None = None) -> str:
+    article = _normalize_article_reference(article_number or "")
+    maternity_articles = {"제65조", "제70조", "제73조", "제74조", "제74조의2", "제75조"}
+    maternity_terms = (
+        "임산부",
+        "임신",
+        "출산전후휴가",
+        "출산",
+        "유산",
+        "사산",
+        "태아검진",
+        "육아 시간",
+        "모성 보호",
+    )
+    if article in maternity_articles or any(term in content for term in maternity_terms):
+        return "일·가정 양립"
+    return category or "일반 상담"
+
+
 def _make_chunks(text: str, chunk_size: int = 550, overlap: int = 100) -> list[str]:
     if not text:
         return []
@@ -250,7 +295,7 @@ def _load_processed_chunks() -> list[KnowledgeChunk]:
     return [
         KnowledgeChunk(
             chunk_id=item["chunk_id"],
-            category=item["category"],
+            category=_normalize_chunk_category(item["category"], item["content"], item.get("article_number")),
             title=item["title"],
             rule_label=item["title"],
             content=item["content"],
@@ -282,7 +327,11 @@ def _load_db_chunks() -> list[KnowledgeChunk]:
         return [
             KnowledgeChunk(
                 chunk_id=chunk.chunk_id,
-                category=chunk.category or document.category or "일반 상담",
+                category=_normalize_chunk_category(
+                    chunk.category or document.category or "일반 상담",
+                    chunk.content,
+                    chunk.article_number,
+                ),
                 title=document.title,
                 rule_label=document.title,
                 content=chunk.content,
@@ -493,6 +542,7 @@ def _score_strict_intent_alignment(question: str, chunk: KnowledgeChunk) -> floa
         article_refs = intent["article_refs"]
         support_terms = intent["support_terms"]
         has_support = any(term in haystack for term in support_terms)
+        is_maternity_intent = "임산부의 보호" in support_terms or "출산전후휴가" in support_terms
 
         if article_refs:
             normalized_refs = {_normalize_article_reference(ref) for ref in article_refs}
@@ -502,6 +552,8 @@ def _score_strict_intent_alignment(question: str, chunk: KnowledgeChunk) -> floa
                 score += 1.2
             else:
                 score -= 2.4
+            if is_maternity_intent and not has_support and chunk.category != "일·가정 양립":
+                score -= 2.0
         else:
             if has_support:
                 score += 2.0

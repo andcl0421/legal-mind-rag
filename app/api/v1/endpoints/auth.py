@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.database.session import get_db
 from app.models import User
-from app.schemas import AuthResponse, LoginRequest, SignUpRequest, TokenResponse, UserProfileResponse
+from app.schemas import AuthResponse, LoginRequest, ProfileUpdateRequest, SignUpRequest, TokenResponse, UserProfileResponse
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -147,4 +147,19 @@ def me(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ):
     user = _get_current_user(db=db, credentials=credentials)
+    return _serialize_user(user)
+
+
+@router.patch("/me", response_model=UserProfileResponse)
+def update_me(
+    payload: ProfileUpdateRequest,
+    db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+):
+    user = _get_current_user(db=db, credentials=credentials)
+    user.nickname = payload.nickname.strip() if payload.nickname else None
+    user.emp_count_type = _normalize_emp_count_type(payload.emp_count_type)
+    user.region_code = payload.region_code.strip().upper() if payload.region_code else None
+    db.commit()
+    db.refresh(user)
     return _serialize_user(user)
