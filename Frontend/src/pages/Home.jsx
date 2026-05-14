@@ -1,18 +1,34 @@
-import { ArrowRight, ClipboardCheck, MessageCircle, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { ArrowRight, Sparkles } from "lucide-react";
 import mungiHome from "../assets/mungi/mungi-home.png";
-import mungiTalkCard from "../assets/mungi/mungi-talk-card.png";
 
-const moodItems = [
-  { emoji: "😊", label: "좋음" },
-  { emoji: "😐", label: "보통" },
-  { emoji: "😟", label: "고민중" },
-  { emoji: "😥", label: "힘들어요" },
-  { emoji: "😡", label: "너무 불편해요" },
+const exampleCards = [
+  {
+    tag: "# 실업급여",
+    question: "실업급여 신청 방법을 알려주세요",
+    answer:
+      "퇴사 후 거주지 관할 고용센터에 방문해 실업을 신고하고 수급자격 인정을 신청합니다. 가입기간과 이직 사유에 따라 지급 요건이 달라질 수 있어요.",
+  },
+  {
+    tag: "# 근로시간",
+    question: "법정 근로시간 한도에 대해 알려주세요",
+    answer:
+      "상시근로자 5인 이상 사업장은 휴게시간 제외 주 40시간, 1일 8시간이 원칙입니다. 합의된 연장근로는 법정 한도 내에서 운영됩니다.",
+  },
+  {
+    tag: "# 휴게시간",
+    question: "휴게시간은 반드시 줘야 하나요?",
+    answer:
+      "근로시간이 4시간이면 30분 이상, 8시간이면 1시간 이상의 휴게시간을 근로시간 도중에 부여해야 합니다. 휴게시간은 자유롭게 이용할 수 있어야 합니다.",
+  },
+  {
+    tag: "# 퇴직금",
+    question: "퇴직금과 평균임금은 어떻게 계산하나요?",
+    answer:
+      "평균임금은 산정사유 발생일 이전 3개월 임금총액을 그 기간의 총일수로 나눠 계산합니다. 퇴직금은 계속근로 1년에 대해 30일분 평균임금을 기준으로 산정합니다.",
+  },
 ];
 
 export default function Home({ goTo }) {
-  const [selectedMood, setSelectedMood] = useState("보통");
   return (
     <div className="grid gap-5">
       <section className="nomu-card relative min-h-[46vh] overflow-hidden bg-gradient-to-br from-[#F6FBED] via-white to-[#EEF7E5] p-6 sm:p-8 lg:p-12">
@@ -22,14 +38,14 @@ export default function Home({ goTo }) {
               <Sparkles size={16} /> 일반 근로자를 위한 AI 노무 상담
             </span>
             <h1 className="max-w-4xl text-3xl font-black leading-tight tracking-[0] text-[#172618] sm:text-5xl xl:text-6xl">
-              오늘도 일터에서 고민분투한
+              오늘도 일터에서 고군분투한
               <br />
               당신의 권리를 찾아요.
               <br />
               <span className="text-nomu-dark">노무톡톡.</span>
             </h1>
             <p className="mt-5 max-w-2xl text-base font-medium leading-7 text-[#637060] xl:text-lg xl:leading-8">
-              법령, 가이드라인, 판례를 근거로 임금, 해고, 휴가, 근로계약 질문을 차분하게 정리해주는 AI 상담 도구예요.
+              법령, 가이드라인, 판례를 근거로 임금, 해고, 휴가, 근로계약 질문을 차분하게 정리해주는 AI 상담 도구입니다.
             </p>
             <button
               type="button"
@@ -47,56 +63,15 @@ export default function Home({ goTo }) {
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-[1.08fr_0.92fr] xl:gap-6">
-        <article className="nomu-card p-5 sm:p-6 xl:p-8">
-          <div className="mb-5 flex items-center gap-2">
-            <ClipboardCheck className="text-nomu-dark" size={21} />
-            <h2 className="text-xl font-black">오늘의 노동 체크</h2>
-          </div>
-          <p className="mb-5 text-sm font-semibold text-[#6F806C]">오늘의 감정을 선택해 일터 상태를 기록해보세요.</p>
-          <div className="grid grid-cols-5 gap-2">
-            {moodItems.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => setSelectedMood(item.label)}
-                className={`grid min-h-24 place-items-center rounded-3xl border p-2 transition ${
-                  selectedMood === item.label
-                    ? "border-nomu-main bg-nomu-soft"
-                    : "border-nomu-line bg-[#FBFDF8] hover:border-nomu-main hover:bg-nomu-soft"
-                }`}
-              >
-                <span className="text-3xl">{item.emoji}</span>
-                <span className="mt-2 text-center text-xs font-bold text-[#566453]">{item.label}</span>
-              </button>
-            ))}
-          </div>
-          <p className="mt-4 text-xs font-bold text-[#6F806C]">선택됨: {selectedMood}</p>
-        </article>
-
-        <article className="nomu-card relative overflow-hidden p-5 sm:p-6 xl:p-8">
-          <div className="relative z-10 max-w-[68%]">
-            <div className="mb-4 grid h-11 w-11 place-items-center rounded-2xl bg-nomu-soft text-nomu-dark">
-              <MessageCircle size={22} />
-            </div>
-            <h2 className="text-xl font-black">노무톡톡과 대화하기</h2>
-            <p className="mt-2 text-sm font-semibold leading-6 text-[#6F806C]">
-              지금 겪는 상황을 그대로 적어보세요. 질문을 정리하고 근거 법령까지 함께 확인해드려요.
-            </p>
-            <button
-              type="button"
-              onClick={() => goTo("chat")}
-              className="mt-5 rounded-full bg-nomu-dark px-5 py-3 text-sm font-extrabold text-white"
-            >
-              상담하러 가기
-            </button>
-          </div>
-          <img
-            src={mungiTalkCard}
-            alt="서류를 든 뭉이"
-            className="absolute bottom-0 right-0 h-full w-[42%] object-contain object-bottom sm:w-[46%] xl:w-[44%]"
-          />
-        </article>
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {exampleCards.map((item) => (
+          <article key={item.tag} className="nomu-card bg-[#F7FAF3] p-5 sm:p-6">
+            <h3 className="text-3xl font-black tracking-[0] text-[#4A5FD1]">{item.tag}</h3>
+            <div className="mt-4 rounded-3xl bg-[#EAF4E2] px-4 py-4 text-lg font-semibold leading-8 text-[#304132]">{item.question}</div>
+            <p className="mt-4 text-sm font-bold text-[#5F725D]">뭉이 도우미</p>
+            <div className="mt-3 rounded-3xl bg-white px-4 py-4 text-base font-semibold leading-7 text-[#2D3330] ring-1 ring-[#E3ECD9]">{item.answer}</div>
+          </article>
+        ))}
       </section>
     </div>
   );

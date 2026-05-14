@@ -745,6 +745,7 @@ def process_chat_message(
     chat_session_id: str | None = None,
     user_id: str | None = None,
     user_context: dict[str, str | None] | None = None,
+    evidence_context: list[dict[str, str]] | None = None,
 ) -> ChatResponse:
     content = content.strip()
     if not content:
@@ -752,15 +753,25 @@ def process_chat_message(
 
     session = None
     if chat_session_id:
-        session = db.query(ChatSession).filter(ChatSession.chat_session_id == chat_session_id).first()
+        session_uuid = _parse_chat_session_id(chat_session_id)
+        session = db.query(ChatSession).filter(ChatSession.chat_session_id == session_uuid).first()
 
     normalized_context = _normalize_user_context(user_context)
-    search_query = _build_search_query(content, session)
+    evidence_context = evidence_context or []
+    evidence_lines: list[str] = []
+    if evidence_context:
+        evidence_lines = [
+            f"파일: {item.get('filename', '-')}, 카테고리: {item.get('category', '-')}, 설명: {item.get('description', '-')}"
+            for item in evidence_context[:5]
+        ]
+    effective_content = content if not evidence_lines else f"{content}\n\n첨부 증거:\n" + "\n".join(f"- {line}" for line in evidence_lines)
+
+    search_query = _build_search_query(effective_content, session)
     chunks = search_knowledge(search_query, top_k=3, user_context=normalized_context)
     if not chunks:
         raise ValueError("현재 검색 가능한 문서가 없어 상담 로직을 진행할 수 없습니다.")
-    category = _choose_category(content, chunks)
-    risk_level = _choose_risk_level(content)
+    category = _choose_category(effective_content, chunks)
+    risk_level = _choose_risk_level(effective_content)
     user_uuid = _parse_user_id(user_id)
 
     if session is None:
@@ -799,11 +810,13 @@ def process_chat_message(
     db.flush()
 
     structured_answer, applied_rule, confidence_score, answer_text, action_items = _build_structured_answer(
-        content,
+        effective_content,
         category,
         chunks,
         user_context=normalized_context,
     )
+    if evidence_lines:
+        answer_text = f"{answer_text}\n\n검토한 첨부 증거\n" + "\n".join(f"- {line}" for line in evidence_lines)
 
     assistant_message = Message(
         chat_session_id=session.chat_session_id,

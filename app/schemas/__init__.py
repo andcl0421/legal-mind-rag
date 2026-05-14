@@ -20,6 +20,8 @@ from app.schemas.auth import (
     UserProfileResponse,
 )
 from app.schemas.alerts import AlertCreateRequest, AlertListResponse, AlertResponse
+from app.schemas.checklist import ChecklistItemListResponse, ChecklistItemResponse, ChecklistItemUpsertRequest
+from app.schemas.evidence import EvidenceFileResponse, EvidenceListResponse
 
 __all__ = [
     "ChatRequest",
@@ -42,4 +44,9 @@ __all__ = [
     "AlertCreateRequest",
     "AlertResponse",
     "AlertListResponse",
+    "ChecklistItemUpsertRequest",
+    "ChecklistItemResponse",
+    "ChecklistItemListResponse",
+    "EvidenceFileResponse",
+    "EvidenceListResponse",
 ]

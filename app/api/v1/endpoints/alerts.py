@@ -83,6 +83,7 @@ def create_alert(
 def list_alerts(
     unread_only: bool = Query(default=False),
     source: str | None = Query(default=None, pattern="^(manual|chat_auto)$"),
+    chat_session_id: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
@@ -93,6 +94,8 @@ def list_alerts(
         query = query.filter(UserNotification.is_read.is_(False))
     if source:
         query = query.filter(UserNotification.source == source)
+    if chat_session_id:
+        query = query.filter(UserNotification.chat_session_id == chat_session_id)
     items = query.order_by(UserNotification.created_at.desc()).limit(limit).all()
     return AlertListResponse(items=[_serialize_alert(item) for item in items])
 

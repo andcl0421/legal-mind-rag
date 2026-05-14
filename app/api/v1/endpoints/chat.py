@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.database.session import get_db
-from app.models import User
+from app.models import User, UserFile
 from app.schemas import (
     ChatMessageHistoryResponse,
     ChatRequest,
@@ -133,12 +133,32 @@ def create_chat_message(
             "employment_type": payload.employment_type,
             "employment_status": payload.employment_status,
         }
+        evidence_context: list[dict[str, str]] = []
+        if payload.evidence_file_ids:
+            rows = (
+                db.query(UserFile)
+                .filter(
+                    UserFile.user_file_id.in_(payload.evidence_file_ids),
+                    UserFile.user_id == user.user_id,
+                    UserFile.is_deleted.is_(False),
+                )
+                .all()
+            )
+            evidence_context = [
+                {
+                    "filename": row.original_filename,
+                    "category": row.category or "미분류",
+                    "description": row.description or "",
+                }
+                for row in rows
+            ]
         return process_chat_message(
             db=db,
             content=payload.content,
             chat_session_id=payload.chat_session_id,
             user_id=str(user.user_id),
             user_context=user_context,
+            evidence_context=evidence_context,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

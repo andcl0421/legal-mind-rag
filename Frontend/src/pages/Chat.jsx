@@ -1,11 +1,12 @@
-import { FileText, Heart, Scale, Send, ShieldCheck, X } from "lucide-react";
+import { FileText, Heart, Paperclip, Scale, Send, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import mungiTalkCard from "../assets/mungi/mungi-talk-card.png";
 import { getApiBase, resolveWorkingApiBase } from "../services/api.js";
 import { deleteSession, fetchSessionDetail, fetchSessions, sendChat } from "../services/chatService.js";
+import { fetchEvidenceFilesByFilter } from "../services/evidenceService.js";
 import { store } from "../store.js";
 
-const fallbackLawChips = ["근로기준법 제74조", "근로기준법 제60조", "고용평등법"];
+const fallbackLawChips = ["근로기준법 제43조", "근로기준법 제60조", "남녀고용평등법"];
 
 export default function Chat() {
   const [sessions, setSessions] = useState([]);
@@ -17,6 +18,11 @@ export default function Chat() {
   const [latestMeta, setLatestMeta] = useState(null);
   const [activeAsideTab, setActiveAsideTab] = useState("chat");
   const [selectedSourceIndex, setSelectedSourceIndex] = useState(0);
+  const [evidenceFiles, setEvidenceFiles] = useState([]);
+  const [selectedEvidenceIds, setSelectedEvidenceIds] = useState([]);
+  const [showEvidencePicker, setShowEvidencePicker] = useState(false);
+  const [evidenceSearch, setEvidenceSearch] = useState("");
+  const [evidenceCategoryFilter, setEvidenceCategoryFilter] = useState("전체");
   const threadRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -27,22 +33,36 @@ export default function Chat() {
 
   const lawChips = useMemo(() => {
     const fromMeta = latestMeta?.structured_answer?.cited_rules || latestMeta?.answer_traces?.map((trace) => trace.citation).filter(Boolean);
-    const fromText = latestAssistant?.content?.match(/근로기준법\s*제?\s*\d+조|고용평등법\s*제?\s*\d+조/g);
-    return [...new Set([...(fromMeta || []), ...(fromText || []), ...fallbackLawChips])].slice(0, 4);
-  }, [latestAssistant, latestMeta]);
+    return [...new Set([...(fromMeta || []), ...fallbackLawChips])].slice(0, 4);
+  }, [latestMeta]);
 
   const sourceItems = latestMeta?.structured_answer?.sources || latestMeta?.latest_sources || [];
   const selectedSource = sourceItems[selectedSourceIndex] || sourceItems[0] || null;
   const sourcePreviewUrl = selectedSource ? buildDocumentPreviewUrl(selectedSource) : "";
+
+  const evidenceCategories = useMemo(() => {
+    const set = new Set(["전체"]);
+    for (const item of evidenceFiles) set.add(item.category || "미분류");
+    return [...set];
+  }, [evidenceFiles]);
+
+  const visibleEvidenceFiles = useMemo(() => {
+    const q = evidenceSearch.trim().toLowerCase();
+    return evidenceFiles.filter((file) => {
+      const category = file.category || "미분류";
+      const categoryMatch = evidenceCategoryFilter === "전체" || category === evidenceCategoryFilter;
+      const nameMatch = !q || String(file.original_filename || "").toLowerCase().includes(q);
+      return categoryMatch && nameMatch;
+    });
+  }, [evidenceFiles, evidenceSearch, evidenceCategoryFilter]);
 
   useEffect(() => {
     loadSessions();
   }, []);
 
   useEffect(() => {
-    if (currentSessionId) {
-      loadSessionDetail(currentSessionId);
-    }
+    if (currentSessionId) loadSessionDetail(currentSessionId);
+    loadEvidenceFiles();
   }, [currentSessionId]);
 
   useEffect(() => {
@@ -57,10 +77,11 @@ export default function Chat() {
     try {
       await resolveWorkingApiBase();
       const data = await fetchSessions();
-      setSessions(data.sessions || []);
-      if (!currentSessionId && data.sessions?.[0]?.chat_session_id) {
-        setCurrentSessionId(data.sessions[0].chat_session_id);
-        store.currentSessionId = data.sessions[0].chat_session_id;
+      const next = data.sessions || [];
+      setSessions(next);
+      if (!currentSessionId && next[0]?.chat_session_id) {
+        setCurrentSessionId(next[0].chat_session_id);
+        store.currentSessionId = next[0].chat_session_id;
       }
       setStatus("상담 기록을 불러왔습니다.");
     } catch (error) {
@@ -79,25 +100,29 @@ export default function Chat() {
     }
   }
 
+  async function loadEvidenceFiles() {
+    try {
+      const data = await fetchEvidenceFilesByFilter({ chatSessionId: currentSessionId || "" });
+      setEvidenceFiles(data.items || []);
+    } catch {
+      setEvidenceFiles([]);
+    }
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     const content = input.trim();
     if (!content || isLoading) return;
     if (!store.token) {
-      setStatus("상담 전송에는 로그인 상태가 필요합니다.");
+      setStatus("로그인 후 상담 전송이 가능합니다.");
       return;
     }
 
-    const optimisticMessage = {
-      message_id: `local-${Date.now()}`,
-      role: "user",
-      content,
-    };
-
+    const optimistic = { message_id: `local-${Date.now()}`, role: "user", content };
     setInput("");
-    setMessages((prev) => [...prev, optimisticMessage]);
+    setMessages((prev) => [...prev, optimistic]);
     setIsLoading(true);
-    setStatus("뭉이가 법령과 문서를 확인하고 있어요...");
+    setStatus("답변을 생성 중입니다...");
 
     try {
       const data = await sendChat({
@@ -108,18 +133,23 @@ export default function Chat() {
         industry: store.consultSettings?.industry || null,
         employment_type: store.consultSettings?.employment_type || null,
         employment_status: store.consultSettings?.employment_status || null,
+        evidence_file_ids: selectedEvidenceIds,
       });
       store.currentSessionId = data.chat_session_id;
       setCurrentSessionId(data.chat_session_id);
       setLatestMeta(data);
       setMessages((prev) => [
-        ...prev.filter((message) => message.message_id !== optimisticMessage.message_id),
+        ...prev.filter((message) => message.message_id !== optimistic.message_id),
         ...(data.messages || [data.latest_user_message, data.latest_assistant_message].filter(Boolean)),
       ]);
-      setStatus(`${data.category || "AI 상담"} · 위험도 ${data.risk_level || "-"} · 답변 완료`);
+      setStatus(`${data.category || "AI 상담"} · 위험도 ${data.risk_level || "-"} · 응답 완료`);
+      setSelectedEvidenceIds([]);
+      setShowEvidencePicker(false);
+      setEvidenceSearch("");
+      setEvidenceCategoryFilter("전체");
       await loadSessions();
     } catch (error) {
-      setMessages((prev) => prev.filter((message) => message.message_id !== optimisticMessage.message_id));
+      setMessages((prev) => prev.filter((message) => message.message_id !== optimistic.message_id));
       setStatus(`상담 전송 실패: ${error.message}`);
     } finally {
       setIsLoading(false);
@@ -129,27 +159,23 @@ export default function Chat() {
   async function handleDeleteSession(event, sessionId) {
     event.stopPropagation();
     if (!store.token) {
-      setStatus("상담 삭제에는 로그인 상태가 필요합니다.");
+      setStatus("로그인 후 상담 삭제가 가능합니다.");
       return;
     }
-
     try {
       await deleteSession(sessionId);
-      const nextSessions = sessions.filter((session) => session.chat_session_id !== sessionId);
-      setSessions(nextSessions);
-
+      const next = sessions.filter((session) => session.chat_session_id !== sessionId);
+      setSessions(next);
       if (currentSessionId === sessionId) {
-        const nextId = nextSessions[0]?.chat_session_id || "";
+        const nextId = next[0]?.chat_session_id || "";
         store.currentSessionId = nextId;
         setCurrentSessionId(nextId);
         if (!nextId) {
           setMessages([]);
           setLatestMeta(null);
-          setStatus("상담을 삭제했습니다.");
         }
-      } else {
-        setStatus("상담을 삭제했습니다.");
       }
+      setStatus("상담을 삭제했습니다.");
     } catch (error) {
       setStatus(`상담 삭제 실패: ${error.message}`);
     }
@@ -161,13 +187,15 @@ export default function Chat() {
     setMessages([]);
     setLatestMeta(null);
     setSelectedSourceIndex(0);
+    setSelectedEvidenceIds([]);
+    setShowEvidencePicker(false);
+    setEvidenceSearch("");
+    setEvidenceCategoryFilter("전체");
     setStatus("새 상담을 시작해보세요.");
   }
 
-  function applySuggestedQuestion(question) {
-    setInput(question);
-    inputRef.current?.focus();
-    setStatus("예시 질문을 입력창에 넣었어요.");
+  function toggleEvidenceSelection(fileId) {
+    setSelectedEvidenceIds((prev) => (prev.includes(fileId) ? prev.filter((id) => id !== fileId) : [...prev, fileId]));
   }
 
   return (
@@ -178,7 +206,6 @@ export default function Chat() {
             <img src={mungiTalkCard} alt="" className="h-9 w-9 rounded-full object-cover object-[50%_38%]" />
             AI 상담실
           </div>
-
           <div className="grid gap-2">
             <button
               type="button"
@@ -187,7 +214,7 @@ export default function Chat() {
                 activeAsideTab === "chat" ? "bg-white text-nomu-dark shadow-sm" : "text-[#657464]"
               }`}
             >
-              <MessageIcon /> 채팅
+              <Heart size={17} /> 채팅
             </button>
             <button
               type="button"
@@ -196,60 +223,41 @@ export default function Chat() {
                 activeAsideTab === "docs" ? "bg-white text-nomu-dark shadow-sm" : "text-[#657464]"
               }`}
             >
-              <FileText size={17} /> 참조문서 뷰어
+              <FileText size={17} /> 참고문서 뷰어
             </button>
           </div>
-
           <div className="mt-6 flex min-h-0 flex-1 flex-col gap-3">
             <button type="button" onClick={startNewChat} className="rounded-2xl bg-nomu-dark px-4 py-3 text-sm font-extrabold text-white">
               새 상담
             </button>
-            <div className="rounded-[1.4rem] border border-nomu-line bg-white/70 px-4 py-3">
-              <p className="text-xs font-black text-[#6F806C]">최근 상담</p>
-            </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-              {sessions.length ? (
-                sessions.map((session) => (
-                  <button
-                    key={session.chat_session_id}
-                    type="button"
-                    onClick={() => {
-                      store.currentSessionId = session.chat_session_id;
-                      setCurrentSessionId(session.chat_session_id);
-                    }}
-                    className={`w-full rounded-[1.4rem] border px-4 py-3 text-left transition ${
-                      currentSessionId === session.chat_session_id
-                        ? "border-nomu-main bg-white text-nomu-dark shadow-sm"
-                        : "border-[#E5ECDF] bg-[#FBFDF8] text-[#657464]"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <strong className="block min-w-0 truncate text-sm font-black">{session.title || "노무 상담"}</strong>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(event) => handleDeleteSession(event, session.chat_session_id)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            handleDeleteSession(event, session.chat_session_id);
-                          }
-                        }}
-                        className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[#91A08E] transition hover:bg-[#EEF4E9] hover:text-[#50624E]"
-                        aria-label="상담 삭제"
-                      >
-                        <X size={12} />
-                      </span>
-                    </div>
-                    <span className="mt-1 block truncate text-xs font-semibold">
-                      {session.category || "AI 상담"} · {session.message_count || 0}건
+              {sessions.map((session) => (
+                <button
+                  key={session.chat_session_id}
+                  type="button"
+                  onClick={() => {
+                    store.currentSessionId = session.chat_session_id;
+                    setCurrentSessionId(session.chat_session_id);
+                  }}
+                  className={`w-full rounded-[1.4rem] border px-4 py-3 text-left transition ${
+                    currentSessionId === session.chat_session_id
+                      ? "border-nomu-main bg-white text-nomu-dark shadow-sm"
+                      : "border-[#E5ECDF] bg-[#FBFDF8] text-[#657464]"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <strong className="block min-w-0 truncate text-sm font-black">{session.title || "노무 상담"}</strong>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => handleDeleteSession(event, session.chat_session_id)}
+                      className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[#91A08E] transition hover:bg-[#EEF4E9] hover:text-[#50624E]"
+                    >
+                      <X size={12} />
                     </span>
-                  </button>
-                ))
-              ) : (
-                <p className="rounded-2xl border border-dashed border-nomu-line bg-white p-3 text-center text-xs font-bold text-[#7B8878]">
-                  저장된 상담이 없습니다.
-                </p>
-              )}
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
         </aside>
@@ -261,7 +269,7 @@ export default function Chat() {
                 <img src={mungiTalkCard} alt="뭉이" className="h-11 w-11 rounded-full bg-nomu-soft object-cover object-[50%_38%] ring-1 ring-nomu-line" />
                 <div>
                   <h1 className="font-black text-nomu-dark">노무톡톡 AI 상담실</h1>
-                  <p className="text-xs font-semibold text-[#6F806C]">법령 근거와 참조문서를 함께 확인할 수 있어요.</p>
+                  <p className="text-xs font-semibold text-[#6F806C]">근거 법령과 참고문서를 함께 확인합니다.</p>
                 </div>
               </div>
               <span className="nomu-chip hidden sm:inline-flex">
@@ -270,8 +278,6 @@ export default function Chat() {
             </div>
 
             <div ref={threadRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto bg-[#F9FBF9] p-4 sm:p-6 xl:p-8">
-              {messages.length === 0 && <IntroMessage onPickQuestion={applySuggestedQuestion} />}
-
               {messages.map((message) =>
                 message.role === "user" ? (
                   <div key={message.message_id} className="flex justify-end">
@@ -284,43 +290,121 @@ export default function Chat() {
                     <img src={mungiTalkCard} alt="뭉이" className="h-10 w-10 shrink-0 rounded-full bg-nomu-soft object-cover object-[50%_38%]" />
                     <div className="max-w-[88%] space-y-3">
                       <div className="whitespace-pre-wrap rounded-[1.5rem] rounded-tl-md border border-nomu-line bg-white p-4 leading-7 text-[#374438] shadow-sm">
-                        <p className="mb-2 font-black text-nomu-dark">노무톡톡, 뭉이의 답변</p>
                         {message.content}
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {lawChips.map((chip) => (
+                        {(lawChips.length ? lawChips : fallbackLawChips).map((chip) => (
                           <span key={chip} className="nomu-chip text-xs">
                             <Scale size={13} /> {chip}
                           </span>
                         ))}
                       </div>
-                      <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-5 text-amber-800">
-                        {latestMeta?.answer_meta?.disclaimer ||
-                          "이 답변은 일반적인 참고 정보이며 법적 효력이 없습니다. 구체적인 분쟁은 공인노무사 또는 관계 기관 상담을 권장합니다."}
-                      </p>
                     </div>
                   </div>
                 ),
               )}
-
-              {isLoading && (
-                <div className="flex gap-3">
-                  <img src={mungiTalkCard} alt="뭉이" className="h-10 w-10 rounded-full bg-nomu-soft object-cover object-[50%_38%]" />
-                  <div className="rounded-[1.5rem] rounded-tl-md border border-nomu-line bg-white px-5 py-4 text-sm font-bold text-[#6F806C] shadow-sm">
-                    답변을 생성하고 있어요...
-                  </div>
-                </div>
-              )}
+              {isLoading && <div className="text-sm font-bold text-[#6F806C]">답변 생성 중...</div>}
             </div>
 
             <div className="border-t border-nomu-line bg-[#FBFDF8] px-4 py-2 text-xs font-bold text-[#6F806C]">{status}</div>
+
+            {selectedEvidenceIds.length > 0 ? (
+              <div className="border-t border-nomu-line bg-[#F7FAF3] px-4 py-2">
+                <div className="flex flex-wrap gap-2">
+                  {selectedEvidenceIds.map((id) => {
+                    const file = evidenceFiles.find((item) => item.user_file_id === id);
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => toggleEvidenceSelection(id)}
+                        className="inline-flex items-center gap-1 rounded-full border border-nomu-line bg-white px-3 py-1 text-xs font-bold text-[#4B5C49]"
+                      >
+                        <Paperclip size={12} />
+                        {(file?.original_filename || `file-${id}`).slice(0, 24)}
+                        <X size={12} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {showEvidencePicker ? (
+              <div className="border-t border-nomu-line bg-white px-4 py-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-black text-[#52604F]">첨부할 증거 파일 선택</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowEvidencePicker(false)}
+                    className="rounded-full border border-nomu-line px-2 py-1 text-xs font-bold text-[#667564]"
+                  >
+                    닫기
+                  </button>
+                </div>
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {evidenceCategories.map((category) => (
+                    <button
+                      key={category}
+                      type="button"
+                      onClick={() => setEvidenceCategoryFilter(category)}
+                      className={`rounded-full px-3 py-1 text-[11px] font-black ${
+                        evidenceCategoryFilter === category
+                          ? "bg-nomu-soft text-nomu-dark ring-1 ring-nomu-line"
+                          : "bg-[#F5F8F1] text-[#6F806C]"
+                      }`}
+                    >
+                      {category}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  value={evidenceSearch}
+                  onChange={(event) => setEvidenceSearch(event.target.value)}
+                  placeholder="파일명 검색"
+                  className="mb-2 w-full rounded-xl border border-nomu-line bg-[#F8FBF5] px-3 py-2 text-xs font-semibold outline-none focus:border-nomu-main"
+                />
+                <div className="max-h-28 space-y-2 overflow-y-auto pr-1">
+                  {visibleEvidenceFiles.length ? (
+                    visibleEvidenceFiles.map((file) => (
+                      <label
+                        key={file.user_file_id}
+                        className="flex items-center gap-2 rounded-xl border border-[#E5ECDF] px-3 py-2 text-xs font-semibold text-[#4B5C49]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedEvidenceIds.includes(file.user_file_id)}
+                          onChange={() => toggleEvidenceSelection(file.user_file_id)}
+                        />
+                        <span className="truncate">{file.original_filename}</span>
+                        <span className="ml-auto rounded-full bg-[#F3F8EC] px-2 py-0.5 text-[10px] font-black text-[#5A6A57]">
+                          {file.category || "미분류"}
+                        </span>
+                      </label>
+                    ))
+                  ) : (
+                    <p className="text-xs font-semibold text-[#7B8878]">조건에 맞는 파일이 없습니다.</p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
             <form onSubmit={handleSubmit} className="flex gap-2 border-t border-nomu-line bg-white p-4">
+              <button
+                type="button"
+                onClick={() => setShowEvidencePicker((prev) => !prev)}
+                className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-nomu-line bg-[#F6F8F4] text-[#51614F]"
+                title="증거 첨부"
+              >
+                <Paperclip size={18} />
+              </button>
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
-                placeholder="메시지를 입력해주세요... 예: 출산휴가, 주휴수당, 해고"
+                placeholder="메시지를 입력해주세요..."
                 className="min-w-0 flex-1 rounded-full border border-nomu-line bg-[#F6F8F4] px-5 py-3 text-sm outline-none focus:border-nomu-main focus:ring-4 focus:ring-nomu-soft"
               />
               <button
@@ -337,81 +421,28 @@ export default function Chat() {
             <div className="border-b border-nomu-line px-5 py-4">
               <div className="flex items-center gap-2 text-sm font-black text-nomu-dark">
                 <FileText size={16} />
-                참조문서 뷰어
+                참고문서 뷰어
               </div>
-              <p className="mt-1 text-xs font-semibold text-[#6F806C]">
-                답변에 사용한 조문, 발췌문, 원문 미리보기를 확인할 수 있어요.
-              </p>
             </div>
-
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {sourceItems.length ? (
+              {selectedSource ? (
                 <div className="grid gap-4">
-                  <div className="grid gap-2">
-                    {sourceItems.map((source, index) => (
-                      <button
-                        key={`${source.chunk_id}-${index}`}
-                        type="button"
-                        onClick={() => setSelectedSourceIndex(index)}
-                        className={`rounded-2xl border px-4 py-3 text-left transition ${
-                          selectedSourceIndex === index
-                            ? "border-nomu-main bg-white text-nomu-dark shadow-sm"
-                            : "border-[#E5ECDF] bg-white/70 text-[#5B6958]"
-                        }`}
-                      >
-                        <p className="truncate text-sm font-black">{source.citation || source.title || "참조문서"}</p>
-                        <p className="mt-1 truncate text-xs font-semibold">{source.source_file || source.source_label || "문서 출처"}</p>
-                      </button>
-                    ))}
-                  </div>
-
-                  {selectedSource && (
-                    <div className="rounded-[1.6rem] border border-nomu-line bg-white p-4">
-                      <p className="text-xs font-black text-[#7B8878]">선택한 근거</p>
-                      <h3 className="mt-2 text-base font-black text-nomu-dark">
-                        {selectedSource.citation || selectedSource.title || "참조문서"}
-                      </h3>
-                      <p className="mt-1 text-xs font-semibold text-[#6F806C]">
-                        {selectedSource.source_file || selectedSource.source_label || "출처 정보"}
-                      </p>
-                      <div className="mt-4 rounded-2xl border border-[#E8EEDC] bg-[#F8FBF4] p-4 text-sm font-semibold leading-6 text-[#3E4B3E]">
-                        {selectedSource.excerpt || "발췌문 정보가 아직 없습니다."}
-                      </div>
-                      {sourcePreviewUrl ? (
-                        <div className="mt-4 overflow-hidden rounded-2xl border border-[#DDE8D3] bg-[#F3F8EC]">
-                          <iframe
-                            title={selectedSource.citation || selectedSource.title || "참조문서 미리보기"}
-                            src={sourcePreviewUrl}
-                            className="h-72 w-full bg-white"
-                          />
-                        </div>
-                      ) : (
-                        <div className="mt-4 rounded-2xl border border-dashed border-[#DDE8D3] bg-[#F8FBF4] px-4 py-5 text-xs font-bold leading-5 text-[#70806F]">
-                          현재 근거는 PDF 원문 미리보기를 제공하지 않는 문서예요.
-                        </div>
-                      )}
-                      <div className="mt-4 grid gap-2 text-xs font-semibold text-[#657464]">
-                        <p>조문: {selectedSource.article_number || "-"}</p>
-                        <p>페이지: {selectedSource.page_number || "-"}</p>
-                        <p>관련도: {selectedSource.relevance_score ?? "-"}</p>
-                        <p>주요 근거: {latestMeta?.latest_primary_citation || latestMeta?.structured_answer?.primary_citation || "-"}</p>
-                      </div>
-                      {sourcePreviewUrl ? (
-                        <a
-                          href={sourcePreviewUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-4 inline-flex rounded-full border border-nomu-line px-4 py-2 text-xs font-black text-nomu-dark"
-                        >
-                          원문 크게 열기
-                        </a>
-                      ) : null}
+                  <div className="rounded-[1.6rem] border border-nomu-line bg-white p-4">
+                    <h3 className="text-base font-black text-nomu-dark">{selectedSource.citation || selectedSource.title || "참고문서"}</h3>
+                    <p className="mt-1 text-xs font-semibold text-[#6F806C]">{selectedSource.source_file || selectedSource.source_label || "-"}</p>
+                    <div className="mt-4 rounded-2xl border border-[#E8EEDC] bg-[#F8FBF4] p-4 text-sm font-semibold leading-6 text-[#3E4B3E]">
+                      {selectedSource.excerpt || "발췌 정보가 없습니다."}
                     </div>
-                  )}
+                  </div>
+                  {sourcePreviewUrl ? (
+                    <div className="mt-4 overflow-hidden rounded-2xl border border-[#DDE8D3] bg-[#F3F8EC]">
+                      <iframe title="참고문서 미리보기" src={sourcePreviewUrl} className="h-72 w-full bg-white" />
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="rounded-[1.6rem] border border-dashed border-nomu-line bg-white p-5 text-sm font-bold leading-6 text-[#7B8878]">
-                  답변을 받으면 여기에서 근거 문서와 조문 발췌문을 볼 수 있어요.
+                  답변을 받으면 참고문서가 여기에 표시됩니다.
                 </div>
               )}
             </div>
@@ -443,47 +474,4 @@ function buildDocumentPreviewUrl(source) {
   const origin = apiBase.replace(/\/api\/v1$/, "");
   const pageFragment = source.page_number ? `#page=${source.page_number}` : "";
   return `${origin}${source.document_path}${pageFragment}`;
-}
-
-function MessageIcon() {
-  return <Heart size={17} />;
-}
-
-function IntroMessage({ onPickQuestion }) {
-  return (
-    <div className="flex gap-3">
-      <img src={mungiTalkCard} alt="뭉이" className="h-10 w-10 shrink-0 rounded-full bg-nomu-soft object-cover object-[50%_38%]" />
-      <div className="max-w-[84%] space-y-2">
-        <div className="rounded-[1.5rem] rounded-tl-md border border-nomu-line bg-white p-4 shadow-sm">
-          <p className="mb-1 font-black text-nomu-dark">안녕하세요. 뭉이예요.</p>
-          <p className="leading-7 text-[#374438]">
-            임금, 주휴수당, 연차, 해고, 육아휴직처럼 회사에서 겪는 문제를 편하게 적어주세요. 필요한 사실관계를 먼저 정리하고 근거와 함께 답변할게요.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => onPickQuestion("출산휴가 중 회사가 불이익을 주는데 어떻게 대응해야 하나요?")}
-            className="nomu-chip text-xs"
-          >
-            출산휴가 대응
-          </button>
-          <button
-            type="button"
-            onClick={() => onPickQuestion("주휴수당을 받으려면 어떤 조건이 필요한가요?")}
-            className="nomu-chip text-xs"
-          >
-            주휴수당 조건
-          </button>
-          <button
-            type="button"
-            onClick={() => onPickQuestion("필요한 서류가 뭐고 어떤 순서로 준비하면 되나요?")}
-            className="nomu-chip text-xs"
-          >
-            필요한 서류
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }

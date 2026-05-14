@@ -1,4 +1,5 @@
 import os
+from io import BytesIO
 import unittest
 from unittest.mock import patch
 
@@ -209,6 +210,79 @@ class ChatApiIntegrationTests(unittest.TestCase):
         unread_items = unread_resp.json()["items"]
         self.assertFalse(any(item["user_notif_id"] == alert_id for item in unread_items))
 
+    def test_evidence_upload_list_download_delete(self):
+        token = self._signup_and_login(email="evidence-user@example.com")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        chat_resp = self.client.post(
+            "/api/v1/chat",
+            json={
+                "content": "임금체불 상담 테스트",
+                "company_size": "5인 이상",
+                "industry": "서비스업",
+                "employment_type": "정규직",
+                "employment_status": "재직 중",
+            },
+            headers=headers,
+        )
+        self.assertEqual(chat_resp.status_code, 200)
+        session_id = chat_resp.json()["chat_session_id"]
+
+        upload_resp = self.client.post(
+            "/api/v1/evidence",
+            headers=headers,
+            files={"file": ("salary-slip.txt", b"salary evidence content", "text/plain")},
+            data={"description": "급여명세 증거", "category": "급여명세서", "chat_session_id": session_id},
+        )
+        self.assertEqual(upload_resp.status_code, 201)
+        uploaded = upload_resp.json()
+        file_id = uploaded["user_file_id"]
+        self.assertEqual(uploaded["category"], "급여명세서")
+        self.assertEqual(uploaded["chat_session_id"], session_id)
+
+        list_resp = self.client.get("/api/v1/evidence", headers=headers)
+        self.assertEqual(list_resp.status_code, 200)
+        items = list_resp.json()["items"]
+        self.assertTrue(any(item["user_file_id"] == file_id for item in items))
+
+        filter_by_category_resp = self.client.get("/api/v1/evidence?category=급여명세서", headers=headers)
+        self.assertEqual(filter_by_category_resp.status_code, 200)
+        category_items = filter_by_category_resp.json()["items"]
+        self.assertTrue(any(item["user_file_id"] == file_id for item in category_items))
+
+        filter_by_session_resp = self.client.get(f"/api/v1/evidence?chat_session_id={session_id}", headers=headers)
+        self.assertEqual(filter_by_session_resp.status_code, 200)
+        session_items = filter_by_session_resp.json()["items"]
+        self.assertTrue(any(item["user_file_id"] == file_id for item in session_items))
+
+        chat_with_evidence_resp = self.client.post(
+            "/api/v1/chat",
+            headers=headers,
+            json={
+                "content": "이 증거 기준으로 다음 대응 알려줘",
+                "chat_session_id": session_id,
+                "company_size": "5인 이상",
+                "industry": "서비스업",
+                "employment_type": "정규직",
+                "employment_status": "재직 중",
+                "evidence_file_ids": [file_id],
+            },
+        )
+        self.assertEqual(chat_with_evidence_resp.status_code, 200)
+        self.assertIn("검토한 첨부 증거", chat_with_evidence_resp.json()["latest_assistant_message"]["content"])
+
+        download_resp = self.client.get(f"/api/v1/evidence/{file_id}/download", headers=headers)
+        self.assertEqual(download_resp.status_code, 200)
+        self.assertEqual(download_resp.content, b"salary evidence content")
+
+        delete_resp = self.client.delete(f"/api/v1/evidence/{file_id}", headers=headers)
+        self.assertEqual(delete_resp.status_code, 204)
+
+        list_after = self.client.get("/api/v1/evidence", headers=headers)
+        self.assertEqual(list_after.status_code, 200)
+        items_after = list_after.json()["items"]
+        self.assertFalse(any(item["user_file_id"] == file_id for item in items_after))
+
     def test_auth_duplicate_signup_returns_409(self):
         payload = {
             "email": "dup-user@example.com",
@@ -296,6 +370,15 @@ class ChatApiIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(len(auto_items), 2)
         self.assertTrue(any(item.get("chat_session_id") == session_id for item in auto_items))
 
+        filtered_resp = self.client.get(
+            f"/api/v1/alerts?source=chat_auto&chat_session_id={session_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(filtered_resp.status_code, 200)
+        filtered_items = filtered_resp.json()["items"]
+        self.assertTrue(filtered_items)
+        self.assertTrue(all(item.get("chat_session_id") == session_id for item in filtered_items))
+
     def test_chat_create_requires_auth(self):
         payload = {
             "content": "연차 사용 가능 여부가 궁금합니다.",
@@ -306,6 +389,29 @@ class ChatApiIntegrationTests(unittest.TestCase):
         }
         resp = self.client.post("/api/v1/chat", json=payload)
         self.assertEqual(resp.status_code, 401)
+
+    def test_checklist_save_and_list(self):
+        token = self._signup_and_login(email="checklist-user@example.com")
+        headers = {"Authorization": f"Bearer {token}"}
+        session_id = "11111111-2222-3333-4444-555555555555"
+
+        save_resp = self.client.post(
+            "/api/v1/checklist",
+            headers=headers,
+            json={
+                "chat_session_id": session_id,
+                "item_type": "required_doc",
+                "item_text": "근로계약서",
+                "is_done": True,
+            },
+        )
+        self.assertEqual(save_resp.status_code, 200)
+        self.assertTrue(save_resp.json()["is_done"])
+
+        list_resp = self.client.get(f"/api/v1/checklist?chat_session_id={session_id}", headers=headers)
+        self.assertEqual(list_resp.status_code, 200)
+        items = list_resp.json()["items"]
+        self.assertTrue(any(item["item_text"] == "근로계약서" and item["is_done"] for item in items))
 
 
 if __name__ == "__main__":

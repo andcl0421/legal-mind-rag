@@ -1,9 +1,10 @@
-import { FileText, RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import mungiHistory from "../assets/mungi/mungi-history.png";
-import { getApiBase, resolveWorkingApiBase } from "../services/api.js";
-import { downloadSessionReport, fetchSessionDetail, fetchSessions } from "../services/chatService.js";
-import { store } from "../store.js";
+import { resolveWorkingApiBase } from "../services/api.js";
+import { fetchAlerts } from "../services/alertService.js";
+import { fetchSessions } from "../services/chatService.js";
+import { fetchChecklistItems, saveChecklistItem } from "../services/checklistService.js";
 
 const tabs = ["전체", "임금/수당", "해고/징계", "육아/휴가", "근로계약"];
 
@@ -12,11 +13,10 @@ export default function History() {
   const [query, setQuery] = useState("");
   const [sessions, setSessions] = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
-  const [selectedMessages, setSelectedMessages] = useState([]);
-  const [selectedSourceIndex, setSelectedSourceIndex] = useState(0);
+  const [sessionAlerts, setSessionAlerts] = useState([]);
+  const [checkState, setCheckState] = useState({});
   const [status, setStatus] = useState("상담 기록을 불러오는 중입니다.");
   const [isLoading, setIsLoading] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const filteredSessions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -31,17 +31,11 @@ export default function History() {
     });
   }, [activeTab, query, sessions]);
 
-  const detailSources = selectedSession?.latest_sources || [];
-  const selectedSource = detailSources[selectedSourceIndex] || detailSources[0] || null;
-  const previewUrl = selectedSource ? buildDocumentPreviewUrl(selectedSource) : "";
+  const checklist = useMemo(() => buildChecklist(sessionAlerts), [sessionAlerts]);
 
   useEffect(() => {
     loadSessions();
   }, []);
-
-  useEffect(() => {
-    setSelectedSourceIndex(0);
-  }, [selectedSession?.chat_session_id]);
 
   async function loadSessions() {
     setIsLoading(true);
@@ -51,13 +45,6 @@ export default function History() {
       const nextSessions = data.sessions || [];
       setSessions(nextSessions);
       setStatus(`상담 기록 ${nextSessions.length}건을 불러왔습니다.`);
-      const selectedId = store.currentHistorySessionId || nextSessions[0]?.chat_session_id;
-      if (selectedId) {
-        await loadDetail(selectedId);
-      } else {
-        setSelectedSession(null);
-        setSelectedMessages([]);
-      }
     } catch (error) {
       setStatus(`상담 기록 조회 실패: ${error.message}`);
     } finally {
@@ -65,38 +52,49 @@ export default function History() {
     }
   }
 
-  async function loadDetail(sessionId) {
+  async function handleSelectSession(item) {
+    setSelectedSession(item);
     try {
-      store.currentHistorySessionId = sessionId;
-      const data = await fetchSessionDetail(sessionId);
-      setSelectedSession(data);
-      setSelectedMessages(data.messages || []);
-      setStatus(`${data.title || "상담"} 상세를 불러왔습니다.`);
-    } catch (error) {
-      setStatus(`상담 상세 조회 실패: ${error.message}`);
+      const [alertsRes, checklistRes] = await Promise.all([
+        fetchAlerts(false, "chat_auto", item.chat_session_id),
+        fetchChecklistItems(item.chat_session_id),
+      ]);
+      setSessionAlerts(alertsRes.items || []);
+      const nextState = {};
+      for (const row of checklistRes.items || []) {
+        nextState[makeKey(row.item_type, row.item_text)] = !!row.is_done;
+      }
+      setCheckState(nextState);
+    } catch {
+      setSessionAlerts([]);
+      setCheckState({});
     }
   }
 
-  async function handleDownloadReport() {
+  async function handleToggle(itemType, itemText, checked) {
     if (!selectedSession?.chat_session_id) return;
-    setIsDownloading(true);
+    const key = makeKey(itemType, itemText);
+    setCheckState((prev) => ({ ...prev, [key]: checked }));
     try {
-      await downloadSessionReport(selectedSession.chat_session_id);
-      setStatus("PDF 리포트를 내려받았습니다.");
+      await saveChecklistItem({
+        chat_session_id: selectedSession.chat_session_id,
+        item_type: itemType,
+        item_text: itemText,
+        is_done: checked,
+      });
     } catch (error) {
-      setStatus(`리포트 다운로드 실패: ${error.message}`);
-    } finally {
-      setIsDownloading(false);
+      setCheckState((prev) => ({ ...prev, [key]: !checked }));
+      setStatus(`체크 저장 실패: ${error.message}`);
     }
   }
 
   return (
-    <section className="grid gap-5">
+    <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="nomu-card relative min-h-[calc(100vh-18rem)] overflow-hidden p-5 sm:p-7 xl:p-9">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <h1 className="text-2xl font-black text-nomu-dark sm:text-3xl">상담내역</h1>
-            <p className="mt-2 font-semibold text-[#6F806C]">이전 상담과 실제 근거 출처를 함께 다시 확인할 수 있어요.</p>
+            <p className="mt-2 font-semibold text-[#6F806C]">상담별 준비할 서류와 먼저 할 일을 저장하며 관리하세요.</p>
           </div>
           <button
             type="button"
@@ -129,7 +127,7 @@ export default function History() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             className="w-full bg-transparent text-sm font-semibold outline-none"
-            placeholder="상담 내용, 참조문서, 답변 출처 검색"
+            placeholder="상담 내용, 제목, 근거 법령 검색"
           />
         </label>
 
@@ -152,8 +150,10 @@ export default function History() {
                 filteredSessions.map((item) => (
                   <tr
                     key={item.chat_session_id}
-                    onClick={() => loadDetail(item.chat_session_id)}
-                    className="cursor-pointer transition hover:bg-[#FBFDF8]"
+                    onClick={() => handleSelectSession(item)}
+                    className={`cursor-pointer transition hover:bg-[#FBFDF8] ${
+                      selectedSession?.chat_session_id === item.chat_session_id ? "bg-[#F9FBF5]" : ""
+                    }`}
                   >
                     <td className="px-5 py-5 font-bold text-[#5D6B5A]">{formatDate(item.updated_at || item.created_at)}</td>
                     <td className="px-5 py-5">
@@ -162,13 +162,13 @@ export default function History() {
                     <td className="px-5 py-5">
                       <p className="font-extrabold text-[#273329]">{item.title || item.last_message_preview || "상담 세션"}</p>
                       <p className="mt-1 max-w-md truncate text-xs font-semibold text-[#7B8878]">
-                        {item.last_message_preview || item.summary || "상세 내용을 확인해보세요."}
+                        {item.last_message_preview || item.summary || "상담 내용을 선택해 체크리스트를 확인하세요."}
                       </p>
                     </td>
                     <td className="px-5 py-5 font-semibold text-blue-700 underline decoration-blue-200 underline-offset-4">
                       {item.latest_primary_citation || "-"}
                     </td>
-                    <td className="px-5 py-5 font-semibold text-[#5D6B5A]">{item.latest_source_label || "출처 정보 확인 가능"}</td>
+                    <td className="px-5 py-5 font-semibold text-[#5D6B5A]">{item.latest_source_label || "출처 정보 없음"}</td>
                     <td className="px-5 py-5">
                       <span className="rounded-full bg-nomu-soft px-3 py-1.5 text-xs font-black text-nomu-dark">답변완료</span>
                     </td>
@@ -185,147 +185,116 @@ export default function History() {
           </table>
         </div>
 
-        <img src={mungiHistory} alt="책을 든 뭉이" className="pointer-events-none absolute -bottom-7 right-4 hidden w-36 object-contain md:block" />
+        <img src={mungiHistory} alt="뭉이" className="pointer-events-none absolute -bottom-7 right-4 hidden w-36 object-contain md:block" />
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="nomu-card p-5 sm:p-6">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-xl font-black text-nomu-dark">상담 상세</h2>
-            <p className="mt-1 text-sm font-semibold text-[#6F806C]">
-              {selectedSession ? `${selectedSession.title || "상담"} · ${selectedSession.category || "AI 상담"}` : "상담 기록을 선택하면 상세를 보여드릴게요."}
-            </p>
+      <aside className="nomu-card min-h-[calc(100vh-18rem)] p-5 sm:p-6">
+        <h2 className="text-xl font-black text-nomu-dark">준비 체크리스트</h2>
+        <p className="mt-1 text-sm font-semibold text-[#6F806C]">
+          {selectedSession ? `${formatDate(selectedSession.updated_at || selectedSession.created_at)} · ${selectedSession.title || "상담"}` : "상담내역에서 한 건을 선택하세요."}
+        </p>
+
+        {selectedSession ? (
+          <div className="mt-4 space-y-4">
+            <ChecklistPanel
+              title="먼저 할 일"
+              itemType="next_action"
+              items={checklist.nextActions}
+              checkState={checkState}
+              onToggle={handleToggle}
+            />
+            <ChecklistPanel
+              title="준비할 서류"
+              itemType="required_doc"
+              items={checklist.requiredDocs}
+              checkState={checkState}
+              onToggle={handleToggle}
+            />
+            <PlainPanel title="알림 누적 내역" items={sessionAlerts.map((item) => `${formatDateTime(item.created_at)} · ${item.title}`)} />
           </div>
-          <div className="flex items-center gap-2">
-            {selectedSession && <span className="nomu-chip">{formatDate(selectedSession.updated_at || selectedSession.created_at)}</span>}
-            {selectedSession ? (
-              <button
-                type="button"
-                onClick={handleDownloadReport}
-                disabled={isDownloading}
-                className="rounded-full bg-nomu-dark px-4 py-2 text-xs font-extrabold text-white disabled:opacity-60"
-              >
-                {isDownloading ? "리포트 생성 중" : "PDF 리포트 다운로드"}
-              </button>
-            ) : null}
+        ) : (
+          <div className="mt-4 rounded-2xl border border-dashed border-nomu-line bg-[#FBFDF8] p-4 text-sm font-semibold text-[#6F806C]">
+            예: 2026.05.14 출산 부당해고 상담을 선택하면 관련 준비서류/할 일/알림이 이곳에 쌓입니다.
           </div>
-        </div>
-
-          {detailSources.length ? (
-            <div className="mb-4 grid gap-3 rounded-3xl border border-nomu-line bg-[#FBFDF8] p-4">
-              <div className="flex flex-wrap gap-2">
-                {detailSources.map((source, index) => (
-                  <button
-                    key={`${source.chunk_id}-${index}`}
-                    type="button"
-                    onClick={() => setSelectedSourceIndex(index)}
-                    className={`rounded-full px-3 py-2 text-xs font-black transition ${
-                      selectedSourceIndex === index
-                        ? "bg-nomu-soft text-nomu-dark ring-1 ring-nomu-line"
-                        : "bg-white text-[#5C6A58] ring-1 ring-[#E6EDDF]"
-                    }`}
-                  >
-                    {source.citation || source.title || "참조문서"}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs font-semibold leading-6 text-[#5C6A58]">주요 근거: {selectedSession.latest_primary_citation || "-"}</p>
-            </div>
-          ) : null}
-
-          <div className="max-h-[520px] space-y-3 overflow-y-auto rounded-3xl border border-nomu-line bg-[#F9FBF9] p-4">
-            {selectedMessages.length ? (
-              selectedMessages.map((message) => (
-                <div key={message.message_id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={`max-w-[82%] whitespace-pre-wrap rounded-[1.35rem] px-4 py-3 text-sm font-semibold leading-6 ${
-                      message.role === "user"
-                        ? "rounded-tr-md bg-nomu-main text-white"
-                        : "rounded-tl-md border border-nomu-line bg-white text-[#374438]"
-                    }`}
-                  >
-                    {message.role !== "user" && <strong className="mb-1 block text-nomu-dark">뭉이</strong>}
-                    {message.content}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-2xl border border-dashed border-nomu-line bg-white p-8 text-center font-bold text-[#7B8878]">
-                표시할 대화가 없습니다.
-              </div>
-            )}
-          </div>
-        </div>
-
-        <aside className="nomu-card min-h-[520px] p-5 sm:p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-black text-nomu-dark">
-            <FileText size={16} />
-            참조문서 뷰어
-          </div>
-
-          {selectedSource ? (
-            <div className="grid gap-4">
-              <div className="rounded-3xl border border-nomu-line bg-[#FBFDF8] p-4">
-                <p className="text-xs font-black text-[#7B8878]">선택한 근거</p>
-                <h3 className="mt-2 text-base font-black text-nomu-dark">
-                  {selectedSource.citation || selectedSource.title || "참조문서"}
-                </h3>
-                <p className="mt-1 text-xs font-semibold text-[#6F806C]">
-                  {selectedSource.source_file || selectedSource.source_label || "출처 정보"}
-                </p>
-                <div className="mt-4 rounded-2xl border border-[#E8EEDC] bg-white p-4 text-sm font-semibold leading-6 text-[#3E4B3E]">
-                  {selectedSource.excerpt || "발췌문 정보가 아직 없습니다."}
-                </div>
-                <div className="mt-4 grid gap-2 text-xs font-semibold text-[#657464]">
-                  <p>조문: {selectedSource.article_number || "-"}</p>
-                  <p>페이지: {selectedSource.page_number || "-"}</p>
-                  <p>관련도: {selectedSource.relevance_score ?? "-"}</p>
-                </div>
-              </div>
-
-              {previewUrl ? (
-                <div className="overflow-hidden rounded-3xl border border-nomu-line bg-[#F3F8EC]">
-                  <iframe
-                    title={selectedSource.citation || selectedSource.title || "상담내역 문서 미리보기"}
-                    src={previewUrl}
-                    className="h-[420px] w-full bg-white"
-                  />
-                </div>
-              ) : (
-                <div className="rounded-3xl border border-dashed border-nomu-line bg-[#FBFDF8] p-5 text-sm font-bold leading-6 text-[#7B8878]">
-                  현재 근거는 PDF 원문 미리보기를 제공하지 않는 문서예요.
-                </div>
-              )}
-
-              {previewUrl ? (
-                <a
-                  href={previewUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex w-fit rounded-full border border-nomu-line px-4 py-2 text-xs font-black text-nomu-dark"
-                >
-                  원문 크게 열기
-                </a>
-              ) : null}
-            </div>
-          ) : (
-            <div className="rounded-3xl border border-dashed border-nomu-line bg-[#FBFDF8] p-5 text-sm font-bold leading-6 text-[#7B8878]">
-              상담 기록을 선택하면 여기에서 참조문서와 PDF 미리보기를 확인할 수 있어요.
-            </div>
-          )}
-        </aside>
-      </div>
+        )}
+      </aside>
     </section>
   );
 }
 
-function buildDocumentPreviewUrl(source) {
-  if (!source?.document_path) return "";
-  const apiBase = getApiBase();
-  const origin = apiBase.replace(/\/api\/v1$/, "");
-  const pageFragment = source.page_number ? `#page=${source.page_number}` : "";
-  return `${origin}${source.document_path}${pageFragment}`;
+function ChecklistPanel({ title, itemType, items, checkState, onToggle }) {
+  return (
+    <div className="rounded-2xl border border-nomu-line bg-[#FBFDF8] p-4">
+      <h3 className="text-sm font-black text-nomu-dark">{title}</h3>
+      <ul className="mt-2 space-y-2">
+        {items.length ? (
+          items.map((item, index) => {
+            const key = makeKey(itemType, item);
+            const checked = !!checkState[key];
+            return (
+              <li key={`${title}-${index}`} className="flex items-start gap-2 text-sm font-semibold text-[#4F5E4C]">
+                <input type="checkbox" className="mt-1" checked={checked} onChange={(e) => onToggle(itemType, item, e.target.checked)} />
+                <span className={checked ? "line-through opacity-60" : ""}>{item}</span>
+              </li>
+            );
+          })
+        ) : (
+          <li className="text-sm font-semibold text-[#7B8878]">항목이 없습니다.</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function PlainPanel({ title, items }) {
+  return (
+    <div className="rounded-2xl border border-nomu-line bg-[#FBFDF8] p-4">
+      <h3 className="text-sm font-black text-nomu-dark">{title}</h3>
+      <ul className="mt-2 space-y-1">
+        {items.length ? (
+          items.map((item, index) => (
+            <li key={`${title}-${index}`} className="text-sm font-semibold text-[#4F5E4C]">
+              - {item}
+            </li>
+          ))
+        ) : (
+          <li className="text-sm font-semibold text-[#7B8878]">항목이 없습니다.</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function buildChecklist(alerts) {
+  const nextActions = [];
+  const requiredDocs = [];
+  for (const alert of alerts) {
+    const lines = String(alert.content || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      if (line.startsWith("-")) {
+        const text = line.replace(/^-+\s*/, "");
+        if (alert.alert_type === "document") requiredDocs.push(text);
+        else nextActions.push(text);
+      } else if (line.includes("우선순위 1:")) {
+        nextActions.push(line.split("우선순위 1:")[1].trim());
+      }
+    }
+  }
+  return {
+    nextActions: unique(nextActions).slice(0, 8),
+    requiredDocs: unique(requiredDocs).slice(0, 12),
+  };
+}
+
+function makeKey(itemType, itemText) {
+  return `${itemType}::${itemText}`;
+}
+
+function unique(items) {
+  return [...new Set(items.filter(Boolean))];
 }
 
 function formatDate(value) {
@@ -333,6 +302,15 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")} ${String(
+    date.getHours(),
+  ).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 function normalizeCategory(category) {

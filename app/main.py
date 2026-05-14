@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 from app.api.v1 import api  # 우리가 만든 중앙 통제실 연결
 from app.database.session import Base, engine
-from app.models import AnswerMeta, AnswerTrace, ChatSession, Message, User, UserNotification
+from app.models import AnswerMeta, AnswerTrace, ChatSession, Message, User, UserChecklistItem, UserFile, UserNotification
 
 # 1. FastAPI 앱 인스턴스 생성
 app = FastAPI(
@@ -37,6 +37,26 @@ def _ensure_notification_columns() -> None:
 
 
 _ensure_notification_columns()
+
+
+def _ensure_user_files_columns() -> None:
+    inspector = inspect(engine)
+    if "user_files" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("user_files")}
+    statements: list[str] = []
+    if "category" not in columns:
+        statements.append("ALTER TABLE user_files ADD COLUMN category VARCHAR")
+    if "chat_session_id" not in columns:
+        statements.append("ALTER TABLE user_files ADD COLUMN chat_session_id VARCHAR")
+    if not statements:
+        return
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+
+
+_ensure_user_files_columns()
 
 # 2. CORS 설정 (프론트엔드와 백엔드가 서로 대화할 수 있게 허용)
 app.add_middleware(

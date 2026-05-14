@@ -11,6 +11,7 @@ class ChatRequest(BaseModel):
     industry: str | None = Field(default=None, description="업종 (예: 제조업, IT, 서비스업)")
     employment_type: str | None = Field(default=None, description="고용 형태 (예: 정규직, 계약직, 파견)")
     employment_status: str | None = Field(default=None, description="재직 상태 (예: 재직 중, 퇴사 예정, 퇴사)")
+    evidence_file_ids: list[int] = Field(default_factory=list, description="채팅 전송에 첨부한 증거 파일 ID 목록")
 
 
 class ChatMessageResponse(BaseModel):
