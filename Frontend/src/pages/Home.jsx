@@ -1,4 +1,5 @@
 import { ArrowRight, Sparkles } from "lucide-react";
+import { useMemo, useState } from "react";
 import mungiHome from "../assets/mungi/mungi-home.png";
 
 const exampleCards = [
@@ -29,6 +30,21 @@ const exampleCards = [
 ];
 
 export default function Home({ goTo }) {
+  const [activeCalc, setActiveCalc] = useState("severance");
+  const [sevMonthly, setSevMonthly] = useState(3000000);
+  const [sevYears, setSevYears] = useState(1);
+  const [minHourly, setMinHourly] = useState(10030);
+  const [minHours, setMinHours] = useState(209);
+  const [leaveMonthly, setLeaveMonthly] = useState(12);
+  const [leaveUsed, setLeaveUsed] = useState(0);
+  const [uiMonths, setUiMonths] = useState(6);
+  const [uiRate, setUiRate] = useState(60);
+
+  const severance = useMemo(() => Math.max(0, sevMonthly) * Math.max(0, sevYears), [sevMonthly, sevYears]);
+  const minimumPay = useMemo(() => Math.max(0, minHourly) * Math.max(0, minHours), [minHourly, minHours]);
+  const annualLeave = useMemo(() => Math.max(0, leaveMonthly - leaveUsed), [leaveMonthly, leaveUsed]);
+  const unemployment = useMemo(() => Math.max(0, sevMonthly) * (Math.max(0, uiRate) / 100) * Math.max(0, uiMonths), [sevMonthly, uiRate, uiMonths]);
+
   return (
     <div className="grid gap-5">
       <section className="nomu-card relative min-h-[46vh] overflow-hidden bg-gradient-to-br from-[#F6FBED] via-white to-[#EEF7E5] p-6 sm:p-8 lg:p-12">
@@ -73,6 +89,95 @@ export default function Home({ goTo }) {
           </article>
         ))}
       </section>
+
+      <section className="nomu-card p-5 sm:p-6 xl:p-8">
+        <h2 className="text-2xl font-black text-nomu-dark">노동 계산기</h2>
+        <p className="mt-2 text-sm font-semibold text-[#6F806C]">참고용 간편 계산입니다. 실제 지급/인정 조건은 상담에서 확인해 주세요.</p>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <CalcTab label="퇴직금 계산기" value="severance" active={activeCalc} onClick={setActiveCalc} />
+          <CalcTab label="최저임금 계산기" value="minimum" active={activeCalc} onClick={setActiveCalc} />
+          <CalcTab label="연차휴가 계산기" value="leave" active={activeCalc} onClick={setActiveCalc} />
+          <CalcTab label="실업급여 계산기" value="unemployment" active={activeCalc} onClick={setActiveCalc} />
+        </div>
+
+        <div className="mt-4 rounded-3xl border border-nomu-line bg-[#FBFDF8] p-4">
+          {activeCalc === "severance" ? (
+            <div className="grid gap-3 md:grid-cols-3">
+              <NumberField label="월 평균임금(원)" value={sevMonthly} onChange={setSevMonthly} />
+              <NumberField label="근속연수(년)" value={sevYears} onChange={setSevYears} />
+              <Result label="예상 퇴직금" value={`${formatNumber(severance)} 원`} />
+            </div>
+          ) : null}
+
+          {activeCalc === "minimum" ? (
+            <div className="grid gap-3 md:grid-cols-3">
+              <NumberField label="시급(원)" value={minHourly} onChange={setMinHourly} />
+              <NumberField label="월 근로시간(시간)" value={minHours} onChange={setMinHours} />
+              <Result label="월 환산 임금" value={`${formatNumber(minimumPay)} 원`} />
+            </div>
+          ) : null}
+
+          {activeCalc === "leave" ? (
+            <div className="grid gap-3 md:grid-cols-3">
+              <NumberField label="발생 연차(일)" value={leaveMonthly} onChange={setLeaveMonthly} />
+              <NumberField label="사용 연차(일)" value={leaveUsed} onChange={setLeaveUsed} />
+              <Result label="남은 연차" value={`${formatNumber(annualLeave)} 일`} />
+            </div>
+          ) : null}
+
+          {activeCalc === "unemployment" ? (
+            <div className="grid gap-3 md:grid-cols-4">
+              <NumberField label="기준 월임금(원)" value={sevMonthly} onChange={setSevMonthly} />
+              <NumberField label="지급개월(개월)" value={uiMonths} onChange={setUiMonths} />
+              <NumberField label="지급률(%)" value={uiRate} onChange={setUiRate} />
+              <Result label="예상 총액" value={`${formatNumber(unemployment)} 원`} />
+            </div>
+          ) : null}
+        </div>
+      </section>
     </div>
   );
+}
+
+function CalcTab({ label, value, active, onClick }) {
+  const isActive = active === value;
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(value)}
+      className={`rounded-full px-4 py-2 text-sm font-extrabold ${isActive ? "bg-nomu-soft text-nomu-dark ring-1 ring-nomu-line" : "bg-[#F5F8F1] text-[#6F806C]"}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function NumberField({ label, value, onChange }) {
+  return (
+    <label className="grid gap-1 rounded-2xl border border-nomu-line bg-white p-3">
+      <span className="text-xs font-black text-[#6F806C]">{label}</span>
+      <input
+        type="number"
+        value={value}
+        min={0}
+        onChange={(e) => onChange(Number(e.target.value || 0))}
+        className="rounded-xl border border-nomu-line bg-[#F7FAF3] px-3 py-2 text-sm font-semibold outline-none focus:border-nomu-main"
+      />
+    </label>
+  );
+}
+
+function Result({ label, value }) {
+  return (
+    <div className="grid gap-1 rounded-2xl border border-nomu-line bg-[#EAF4E2] p-3">
+      <span className="text-xs font-black text-[#5F725D]">{label}</span>
+      <strong className="text-lg font-black text-[#2D3330]">{value}</strong>
+    </div>
+  );
+}
+
+function formatNumber(value) {
+  const n = Number.isFinite(value) ? value : 0;
+  return n.toLocaleString("ko-KR");
 }
