@@ -26,11 +26,6 @@ export default function Chat() {
   const threadRef = useRef(null);
   const inputRef = useRef(null);
 
-  const latestAssistant = useMemo(
-    () => [...messages].reverse().find((message) => message.role === "assistant"),
-    [messages],
-  );
-
   const lawChips = useMemo(() => {
     const fromMeta = latestMeta?.structured_answer?.cited_rules || latestMeta?.answer_traces?.map((trace) => trace.citation).filter(Boolean);
     return [...new Set([...(fromMeta || []), ...fallbackLawChips])].slice(0, 4);
@@ -38,7 +33,7 @@ export default function Chat() {
 
   const sourceItems = latestMeta?.structured_answer?.sources || latestMeta?.latest_sources || [];
   const selectedSource = sourceItems[selectedSourceIndex] || sourceItems[0] || null;
-  const sourcePreviewUrl = selectedSource ? buildDocumentPreviewUrl(selectedSource) : "";
+  const sourcePreviewUrl = useMemo(() => buildDocumentPreviewUrl(selectedSource), [selectedSource]);
 
   const evidenceCategories = useMemo(() => {
     const set = new Set(["전체"]);
@@ -66,8 +61,10 @@ export default function Chat() {
   }, [currentSessionId]);
 
   useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isLoading]);
+    if (activeAsideTab === "chat") {
+      threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
+    }
+  }, [messages, isLoading, activeAsideTab]);
 
   useEffect(() => {
     setSelectedSourceIndex(0);
@@ -192,6 +189,7 @@ export default function Chat() {
     setEvidenceSearch("");
     setEvidenceCategoryFilter("전체");
     setStatus("새 상담을 시작해보세요.");
+    setActiveAsideTab("chat");
   }
 
   function toggleEvidenceSelection(fileId) {
@@ -277,172 +275,209 @@ export default function Chat() {
               </span>
             </div>
 
-            <div ref={threadRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto bg-[#F9FBF9] p-4 sm:p-6 xl:p-8">
-              {messages.map((message) =>
-                message.role === "user" ? (
-                  <div key={message.message_id} className="flex justify-end">
-                    <div className="max-w-[78%] whitespace-pre-wrap rounded-[1.5rem] rounded-tr-md bg-nomu-main px-5 py-4 font-semibold leading-7 text-white shadow-sm">
-                      {message.content}
-                    </div>
-                  </div>
-                ) : (
-                  <div key={message.message_id} className="flex gap-3">
-                    <img src={mungiTalkCard} alt="뭉이" className="h-10 w-10 shrink-0 rounded-full bg-nomu-soft object-cover object-[50%_38%]" />
-                    <div className="max-w-[88%] space-y-3">
-                      <div className="whitespace-pre-wrap rounded-[1.5rem] rounded-tl-md border border-nomu-line bg-white p-4 leading-7 text-[#374438] shadow-sm">
-                        {message.content}
+            {activeAsideTab === "chat" ? (
+              <>
+                <div ref={threadRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto bg-[#F9FBF9] p-4 sm:p-6 xl:p-8">
+                  {messages.map((message) =>
+                    message.role === "user" ? (
+                      <div key={message.message_id} className="flex justify-end">
+                        <div className="max-w-[78%] whitespace-pre-wrap rounded-[1.5rem] rounded-tr-md bg-nomu-main px-5 py-4 font-semibold leading-7 text-white shadow-sm">
+                          {message.content}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {(lawChips.length ? lawChips : fallbackLawChips).map((chip) => (
-                          <span key={chip} className="nomu-chip text-xs">
-                            <Scale size={13} /> {chip}
-                          </span>
-                        ))}
+                    ) : (
+                      <div key={message.message_id} className="flex gap-3">
+                        <img src={mungiTalkCard} alt="뭉이" className="h-10 w-10 shrink-0 rounded-full bg-nomu-soft object-cover object-[50%_38%]" />
+                        <div className="max-w-[88%] space-y-3">
+                          <div className="whitespace-pre-wrap rounded-[1.5rem] rounded-tl-md border border-nomu-line bg-white p-4 leading-7 text-[#374438] shadow-sm">
+                            {message.content}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {(lawChips.length ? lawChips : fallbackLawChips).map((chip) => (
+                              <span key={chip} className="nomu-chip text-xs">
+                                <Scale size={13} /> {chip}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                ),
-              )}
-              {isLoading && <div className="text-sm font-bold text-[#6F806C]">답변 생성 중...</div>}
-            </div>
-
-            <div className="border-t border-nomu-line bg-[#FBFDF8] px-4 py-2 text-xs font-bold text-[#6F806C]">{status}</div>
-
-            {selectedEvidenceIds.length > 0 ? (
-              <div className="border-t border-nomu-line bg-[#F7FAF3] px-4 py-2">
-                <div className="flex flex-wrap gap-2">
-                  {selectedEvidenceIds.map((id) => {
-                    const file = evidenceFiles.find((item) => item.user_file_id === id);
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => toggleEvidenceSelection(id)}
-                        className="inline-flex items-center gap-1 rounded-full border border-nomu-line bg-white px-3 py-1 text-xs font-bold text-[#4B5C49]"
-                      >
-                        <Paperclip size={12} />
-                        {(file?.original_filename || `file-${id}`).slice(0, 24)}
-                        <X size={12} />
-                      </button>
-                    );
-                  })}
+                    ),
+                  )}
+                  {isLoading && <div className="text-sm font-bold text-[#6F806C]">답변 생성 중...</div>}
                 </div>
-              </div>
-            ) : null}
 
-            {showEvidencePicker ? (
-              <div className="border-t border-nomu-line bg-white px-4 py-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-xs font-black text-[#52604F]">첨부할 증거 파일 선택</p>
+                <div className="border-t border-nomu-line bg-[#FBFDF8] px-4 py-2 text-xs font-bold text-[#6F806C]">{status}</div>
+
+                {selectedEvidenceIds.length > 0 ? (
+                  <div className="border-t border-nomu-line bg-[#F7FAF3] px-4 py-2">
+                    <div className="flex flex-wrap gap-2">
+                      {selectedEvidenceIds.map((id) => {
+                        const file = evidenceFiles.find((item) => item.user_file_id === id);
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => toggleEvidenceSelection(id)}
+                            className="inline-flex items-center gap-1 rounded-full border border-nomu-line bg-white px-3 py-1 text-xs font-bold text-[#4B5C49]"
+                          >
+                            <Paperclip size={12} />
+                            {(file?.original_filename || `file-${id}`).slice(0, 24)}
+                            <X size={12} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {showEvidencePicker ? (
+                  <div className="border-t border-nomu-line bg-white px-4 py-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-xs font-black text-[#52604F]">첨부할 증거 파일 선택</p>
+                      <button
+                        type="button"
+                        onClick={() => setShowEvidencePicker(false)}
+                        className="rounded-full border border-nomu-line px-2 py-1 text-xs font-bold text-[#667564]"
+                      >
+                        닫기
+                      </button>
+                    </div>
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {evidenceCategories.map((category) => (
+                        <button
+                          key={category}
+                          type="button"
+                          onClick={() => setEvidenceCategoryFilter(category)}
+                          className={`rounded-full px-3 py-1 text-[11px] font-black ${
+                            evidenceCategoryFilter === category
+                              ? "bg-nomu-soft text-nomu-dark ring-1 ring-nomu-line"
+                              : "bg-[#F5F8F1] text-[#6F806C]"
+                          }`}
+                        >
+                          {category}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      value={evidenceSearch}
+                      onChange={(event) => setEvidenceSearch(event.target.value)}
+                      placeholder="파일명 검색"
+                      className="mb-2 w-full rounded-xl border border-nomu-line bg-[#F8FBF5] px-3 py-2 text-xs font-semibold outline-none focus:border-nomu-main"
+                    />
+                    <div className="max-h-28 space-y-2 overflow-y-auto pr-1">
+                      {visibleEvidenceFiles.length ? (
+                        visibleEvidenceFiles.map((file) => (
+                          <label
+                            key={file.user_file_id}
+                            className="flex items-center gap-2 rounded-xl border border-[#E5ECDF] px-3 py-2 text-xs font-semibold text-[#4B5C49]"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedEvidenceIds.includes(file.user_file_id)}
+                              onChange={() => toggleEvidenceSelection(file.user_file_id)}
+                            />
+                            <span className="truncate">{file.original_filename}</span>
+                            <span className="ml-auto rounded-full bg-[#F3F8EC] px-2 py-0.5 text-[10px] font-black text-[#5A6A57]">
+                              {file.category || "미분류"}
+                            </span>
+                          </label>
+                        ))
+                      ) : (
+                        <p className="text-xs font-semibold text-[#7B8878]">조건에 맞는 파일이 없습니다.</p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                <form onSubmit={handleSubmit} className="flex gap-2 border-t border-nomu-line bg-white p-4">
                   <button
                     type="button"
-                    onClick={() => setShowEvidencePicker(false)}
-                    className="rounded-full border border-nomu-line px-2 py-1 text-xs font-bold text-[#667564]"
+                    onClick={() => setShowEvidencePicker((prev) => !prev)}
+                    className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-nomu-line bg-[#F6F8F4] text-[#51614F]"
+                    title="증거 첨부"
                   >
-                    닫기
+                    <Paperclip size={18} />
                   </button>
-                </div>
-                <div className="mb-2 flex flex-wrap gap-2">
-                  {evidenceCategories.map((category) => (
-                    <button
-                      key={category}
-                      type="button"
-                      onClick={() => setEvidenceCategoryFilter(category)}
-                      className={`rounded-full px-3 py-1 text-[11px] font-black ${
-                        evidenceCategoryFilter === category
-                          ? "bg-nomu-soft text-nomu-dark ring-1 ring-nomu-line"
-                          : "bg-[#F5F8F1] text-[#6F806C]"
-                      }`}
-                    >
-                      {category}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  type="text"
-                  value={evidenceSearch}
-                  onChange={(event) => setEvidenceSearch(event.target.value)}
-                  placeholder="파일명 검색"
-                  className="mb-2 w-full rounded-xl border border-nomu-line bg-[#F8FBF5] px-3 py-2 text-xs font-semibold outline-none focus:border-nomu-main"
-                />
-                <div className="max-h-28 space-y-2 overflow-y-auto pr-1">
-                  {visibleEvidenceFiles.length ? (
-                    visibleEvidenceFiles.map((file) => (
-                      <label
-                        key={file.user_file_id}
-                        className="flex items-center gap-2 rounded-xl border border-[#E5ECDF] px-3 py-2 text-xs font-semibold text-[#4B5C49]"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedEvidenceIds.includes(file.user_file_id)}
-                          onChange={() => toggleEvidenceSelection(file.user_file_id)}
-                        />
-                        <span className="truncate">{file.original_filename}</span>
-                        <span className="ml-auto rounded-full bg-[#F3F8EC] px-2 py-0.5 text-[10px] font-black text-[#5A6A57]">
-                          {file.category || "미분류"}
-                        </span>
-                      </label>
-                    ))
-                  ) : (
-                    <p className="text-xs font-semibold text-[#7B8878]">조건에 맞는 파일이 없습니다.</p>
-                  )}
-                </div>
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    placeholder="메시지를 입력해주세요..."
+                    className="min-w-0 flex-1 rounded-full border border-nomu-line bg-[#F6F8F4] px-5 py-3 text-sm outline-none focus:border-nomu-main focus:ring-4 focus:ring-nomu-soft"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-nomu-main text-white shadow-lg shadow-green-100 disabled:opacity-50"
+                  >
+                    <Send size={20} />
+                  </button>
+                </form>
+              </>
+            ) : (
+              <div className="min-h-0 flex-1 bg-[#F4FAEC] p-4 sm:p-6 xl:p-8">
+                {sourcePreviewUrl ? (
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[2rem] border border-[#D7E9CE] bg-white shadow-[0_14px_30px_rgba(130,168,127,0.15)]">
+                    <div className="flex items-center gap-2 border-b border-[#E2EFDA] bg-[#F8FDF4] px-4 py-3">
+                      <span className="h-2.5 w-2.5 rounded-full bg-[#F6C56B]" />
+                      <span className="h-2.5 w-2.5 rounded-full bg-[#9FD79A]" />
+                      <span className="h-2.5 w-2.5 rounded-full bg-[#8FC2F4]" />
+                      <p className="ml-2 text-xs font-black text-[#5F725D]">뭉이 참고문서 뷰어</p>
+                    </div>
+                    <iframe
+                      key={`${selectedSource?.chunk_id || "doc"}-${selectedSource?.page_number || "p"}-${selectedSource?.article_number || "a"}`}
+                      title="참고문서 미리보기"
+                      src={sourcePreviewUrl}
+                      className="min-h-0 flex-1 w-full bg-white"
+                    />
+                  </div>
+                ) : (
+                  <div className="grid h-full place-items-center rounded-[2rem] border border-dashed border-[#CFE3C4] bg-white/90 text-center text-sm font-semibold text-[#6F806C]">
+                    <div>
+                      <p>표시할 참고문서가 없습니다.</p>
+                      <p className="mt-2">상담 답변을 받으면 참고문서를 확인할 수 있어요.</p>
+                    </div>
+                  </div>
+                )}
               </div>
-            ) : null}
-
-            <form onSubmit={handleSubmit} className="flex gap-2 border-t border-nomu-line bg-white p-4">
-              <button
-                type="button"
-                onClick={() => setShowEvidencePicker((prev) => !prev)}
-                className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-nomu-line bg-[#F6F8F4] text-[#51614F]"
-                title="증거 첨부"
-              >
-                <Paperclip size={18} />
-              </button>
-              <input
-                ref={inputRef}
-                type="text"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder="메시지를 입력해주세요..."
-                className="min-w-0 flex-1 rounded-full border border-nomu-line bg-[#F6F8F4] px-5 py-3 text-sm outline-none focus:border-nomu-main focus:ring-4 focus:ring-nomu-soft"
-              />
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-nomu-main text-white shadow-lg shadow-green-100 disabled:opacity-50"
-              >
-                <Send size={20} />
-              </button>
-            </form>
+            )}
           </div>
 
           <aside className="hidden min-h-0 border-l border-nomu-line bg-[#FBFDF8] xl:flex xl:flex-col">
             <div className="border-b border-nomu-line px-5 py-4">
               <div className="flex items-center gap-2 text-sm font-black text-nomu-dark">
                 <FileText size={16} />
-                참고문서 뷰어
+                참고문서 목록
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {selectedSource ? (
-                <div className="grid gap-4">
-                  <div className="rounded-[1.6rem] border border-nomu-line bg-white p-4">
-                    <h3 className="text-base font-black text-nomu-dark">{selectedSource.citation || selectedSource.title || "참고문서"}</h3>
-                    <p className="mt-1 text-xs font-semibold text-[#6F806C]">{selectedSource.source_file || selectedSource.source_label || "-"}</p>
-                    <div className="mt-4 rounded-2xl border border-[#E8EEDC] bg-[#F8FBF4] p-4 text-sm font-semibold leading-6 text-[#3E4B3E]">
-                      {selectedSource.excerpt || "발췌 정보가 없습니다."}
-                    </div>
-                  </div>
-                  {sourcePreviewUrl ? (
-                    <div className="mt-4 overflow-hidden rounded-2xl border border-[#DDE8D3] bg-[#F3F8EC]">
-                      <iframe title="참고문서 미리보기" src={sourcePreviewUrl} className="h-72 w-full bg-white" />
-                    </div>
-                  ) : null}
+              {sourceItems.length ? (
+                <div className="grid gap-2">
+                  {sourceItems.map((source, index) => (
+                    <button
+                      key={`${source.chunk_id || "source"}-${index}`}
+                      type="button"
+                      onClick={() => {
+                        setSelectedSourceIndex(index);
+                        setActiveAsideTab("docs");
+                      }}
+                      className={`rounded-2xl border px-4 py-3 text-left transition ${
+                        selectedSourceIndex === index ? "border-nomu-main bg-white text-nomu-dark shadow-sm" : "border-[#E5ECDF] bg-white/70 text-[#5B6958]"
+                      }`}
+                    >
+                      <p className="truncate text-sm font-black">{source.citation || source.title || "참고문서"}</p>
+                      <p className="mt-1 truncate text-xs font-semibold">{source.source_file || source.source_label || "문서 출처"}</p>
+                      <p className="mt-2 line-clamp-2 text-left text-[11px] font-semibold leading-5 text-[#6F806C]">
+                        {source.excerpt || "요약 정보가 없습니다."}
+                      </p>
+                    </button>
+                  ))}
                 </div>
               ) : (
                 <div className="rounded-[1.6rem] border border-dashed border-nomu-line bg-white p-5 text-sm font-bold leading-6 text-[#7B8878]">
-                  답변을 받으면 참고문서가 여기에 표시됩니다.
+                  아직 참고문서가 없습니다.
                 </div>
               )}
             </div>
@@ -472,6 +507,13 @@ function buildDocumentPreviewUrl(source) {
   if (!source?.document_path) return "";
   const apiBase = getApiBase();
   const origin = apiBase.replace(/\/api\/v1$/, "");
-  const pageFragment = source.page_number ? `#page=${source.page_number}` : "";
-  return `${origin}${source.document_path}${pageFragment}`;
+  const page = source.page_number ? Number(source.page_number) : null;
+  const article = String(source.article_number || "")
+    .replace(/\s+/g, "")
+    .trim();
+  const params = new URLSearchParams();
+  if (page && Number.isFinite(page)) params.set("page", String(page));
+  if (article) params.set("search", article);
+  const hash = params.toString();
+  return `${origin}${source.document_path}${hash ? `#${hash}` : ""}`;
 }

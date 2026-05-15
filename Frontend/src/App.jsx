@@ -1,14 +1,14 @@
 import { Bell, Clock3, Home, LogIn, MessageCircle, UserPlus, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import mungiProfile from "./assets/mungi/mungi-profile-chat.png";
+import { fetchMe } from "./services/authService.js";
+import { clearAuth, store } from "./store.js";
 import Chat from "./pages/Chat.jsx";
 import History from "./pages/History.jsx";
 import HomePage from "./pages/Home.jsx";
 import Login from "./pages/Login.jsx";
 import MyPage from "./pages/MyPage.jsx";
 import SignUp from "./pages/SignUp.jsx";
-import mungiProfile from "./assets/mungi/mungi-profile-chat.png";
-import { fetchMe } from "./services/authService.js";
-import { clearAuth, store } from "./store.js";
 
 const pages = {
   home: { label: "홈", icon: Home, component: HomePage },
@@ -21,9 +21,9 @@ const pages = {
 
 export default function App() {
   const [activePage, setActivePage] = useState("home");
-  const [authUser, setAuthUser] = useState(store.user);
+  const [authUser, setAuthUser] = useState(store.user || null);
   const ActiveComponent = useMemo(() => pages[activePage].component, [activePage]);
-  const authed = Boolean(store.token);
+  const authed = Boolean(store.token && authUser);
 
   function navigateTo(pageKey) {
     if (pageKey === "mypage" && !authed) {
@@ -34,14 +34,20 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!store.token) return;
+    if (!store.token) {
+      setAuthUser(null);
+      return;
+    }
     fetchMe()
       .then((user) => setAuthUser(user))
-      .catch(() => setAuthUser(null));
+      .catch(() => {
+        clearAuth();
+        setAuthUser(null);
+      });
   }, []);
 
   function handleAuthSuccess(user) {
-    setAuthUser(user || store.user);
+    setAuthUser(user || store.user || null);
     setActivePage("chat");
   }
 
@@ -55,11 +61,7 @@ export default function App() {
     <div className="min-h-screen bg-nomu-bg pb-24 text-nomu-ink">
       <header className="sticky top-0 z-20 border-b border-nomu-line/80 bg-[#FAFCF7]/90 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
-          <button
-            type="button"
-            onClick={() => navigateTo("home")}
-            className="flex min-w-0 items-center gap-2 rounded-full text-left"
-          >
+          <button type="button" onClick={() => navigateTo("home")} className="flex min-w-0 items-center gap-2 rounded-full text-left">
             <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-nomu-soft ring-1 ring-nomu-line">
               <img src={mungiProfile} alt="" className="h-full w-full object-cover object-top" />
             </span>
@@ -73,35 +75,41 @@ export default function App() {
             {Object.entries(pages)
               .filter(([key]) => key !== "login" && key !== "signup")
               .map(([key, page]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => navigateTo(key)}
-                className={`border-b-2 px-1 py-3 transition ${
-                  activePage === key ? "border-nomu-main text-nomu-dark" : "border-transparent hover:text-nomu-dark"
-                }`}
-              >
-                {page.label}
-              </button>
-            ))}
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => navigateTo(key)}
+                  className={`border-b-2 px-1 py-3 transition ${
+                    activePage === key ? "border-nomu-main text-nomu-dark" : "border-transparent hover:text-nomu-dark"
+                  }`}
+                >
+                  {page.label}
+                </button>
+              ))}
           </nav>
 
           <div className="flex items-center gap-2 text-nomu-dark">
-            <button type="button" onClick={() => navigateTo("mypage")} className="grid h-9 w-9 place-items-center rounded-full border border-nomu-line bg-white">
+            <button
+              type="button"
+              onClick={() => navigateTo("chat")}
+              className="grid h-9 w-9 place-items-center rounded-full border border-nomu-line bg-white"
+              title="알림"
+            >
               <Bell size={18} />
             </button>
-            <button type="button" onClick={() => navigateTo("mypage")} className="grid h-9 w-9 place-items-center rounded-full border border-nomu-line bg-white">
+            <button
+              type="button"
+              onClick={() => navigateTo("mypage")}
+              className="grid h-9 w-9 place-items-center rounded-full border border-nomu-line bg-white"
+              title="마이페이지"
+            >
               <UserRound size={18} />
             </button>
+
             {authed ? (
-              <>
-                <span className="hidden max-w-40 truncate rounded-full border border-nomu-line bg-white px-3 py-2 text-xs font-bold text-[#657464] sm:inline">
-                  {authUser?.nickname || authUser?.email || "로그인됨"}
-                </span>
-                <button type="button" onClick={handleLogout} className="rounded-full bg-nomu-dark px-4 py-2 text-xs font-extrabold text-white">
-                  로그아웃
-                </button>
-              </>
+              <button type="button" onClick={handleLogout} className="rounded-full bg-nomu-dark px-4 py-2 text-xs font-extrabold text-white">
+                로그아웃
+              </button>
             ) : (
               <>
                 <button
@@ -133,22 +141,22 @@ export default function App() {
           {Object.entries(pages)
             .filter(([key]) => ["home", "chat", "history", "mypage"].includes(key))
             .map(([key, page]) => {
-            const Icon = page.icon;
-            const isActive = activePage === key || (!authed && key === "mypage" && activePage === "login");
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => navigateTo(key)}
-                className={`flex h-14 flex-col items-center justify-center gap-1 rounded-2xl text-xs font-bold transition ${
-                  isActive ? "bg-nomu-soft text-nomu-dark" : "text-[#7B8878]"
-                }`}
-              >
-                <Icon size={19} />
-                {page.label}
-              </button>
-            );
-          })}
+              const Icon = page.icon;
+              const isActive = activePage === key || (!authed && key === "mypage" && activePage === "login");
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => navigateTo(key)}
+                  className={`flex h-14 flex-col items-center justify-center gap-1 rounded-2xl text-xs font-bold transition ${
+                    isActive ? "bg-nomu-soft text-nomu-dark" : "text-[#7B8878]"
+                  }`}
+                >
+                  <Icon size={19} />
+                  {page.label}
+                </button>
+              );
+            })}
         </div>
       </nav>
     </div>
