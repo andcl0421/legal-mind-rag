@@ -1,9 +1,8 @@
 import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import mungiHistory from "../assets/mungi/mungi-history.png";
 import { resolveWorkingApiBase } from "../services/api.js";
 import { fetchAlerts } from "../services/alertService.js";
-import { fetchSessions } from "../services/chatService.js";
+import { fetchSessionDetail, fetchSessions } from "../services/chatService.js";
 import { fetchChecklistItems, saveChecklistItem } from "../services/checklistService.js";
 
 const tabs = ["전체", "임금/수당", "해고/징계", "육아/휴가", "근로계약"];
@@ -13,6 +12,7 @@ export default function History() {
   const [query, setQuery] = useState("");
   const [sessions, setSessions] = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
+  const [selectedSessionDetail, setSelectedSessionDetail] = useState(null);
   const [sessionAlerts, setSessionAlerts] = useState([]);
   const [checkState, setCheckState] = useState({});
   const [status, setStatus] = useState("상담 기록을 불러오는 중입니다.");
@@ -31,7 +31,7 @@ export default function History() {
     });
   }, [activeTab, query, sessions]);
 
-  const checklist = useMemo(() => buildChecklist(sessionAlerts), [sessionAlerts]);
+  const checklist = useMemo(() => buildChecklist(sessionAlerts, selectedSessionDetail), [sessionAlerts, selectedSessionDetail]);
 
   useEffect(() => {
     loadSessions();
@@ -55,11 +55,13 @@ export default function History() {
   async function handleSelectSession(item) {
     setSelectedSession(item);
     try {
-      const [alertsRes, checklistRes] = await Promise.all([
+      const [alertsRes, checklistRes, detailRes] = await Promise.all([
         fetchAlerts(false, "chat_auto", item.chat_session_id),
         fetchChecklistItems(item.chat_session_id),
+        fetchSessionDetail(item.chat_session_id),
       ]);
       setSessionAlerts(alertsRes.items || []);
+      setSelectedSessionDetail(detailRes || null);
       const nextState = {};
       for (const row of checklistRes.items || []) {
         nextState[makeKey(row.item_type, row.item_text)] = !!row.is_done;
@@ -67,6 +69,7 @@ export default function History() {
       setCheckState(nextState);
     } catch {
       setSessionAlerts([]);
+      setSelectedSessionDetail(null);
       setCheckState({});
     }
   }
@@ -185,7 +188,6 @@ export default function History() {
           </table>
         </div>
 
-        <img src={mungiHistory} alt="뭉이" className="pointer-events-none absolute -bottom-7 right-4 hidden w-36 object-contain md:block" />
       </div>
 
       <aside className="nomu-card min-h-[calc(100vh-18rem)] p-5 sm:p-6">
@@ -265,7 +267,12 @@ function PlainPanel({ title, items }) {
   );
 }
 
-function buildChecklist(alerts) {
+function buildChecklist(alerts, sessionDetail) {
+  const fromMessage = parseChecklistFromLatestAssistant(sessionDetail);
+  if (fromMessage.nextActions.length || fromMessage.requiredDocs.length) {
+    return fromMessage;
+  }
+
   const nextActions = [];
   const requiredDocs = [];
   for (const alert of alerts) {
@@ -283,6 +290,41 @@ function buildChecklist(alerts) {
       }
     }
   }
+  return {
+    nextActions: unique(nextActions).slice(0, 8),
+    requiredDocs: unique(requiredDocs).slice(0, 12),
+  };
+}
+
+function parseChecklistFromLatestAssistant(sessionDetail) {
+  const messages = sessionDetail?.messages || [];
+  const latestAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  const text = String(latestAssistant?.content || "");
+  if (!text) return { nextActions: [], requiredDocs: [] };
+
+  const lines = text.split("\n").map((line) => line.trim());
+  const nextActions = [];
+  const requiredDocs = [];
+  let mode = "";
+
+  for (const line of lines) {
+    if (!line) continue;
+    if (line.includes("먼저 할 일")) {
+      mode = "next";
+      continue;
+    }
+    if (line.includes("준비할 서류")) {
+      mode = "docs";
+      continue;
+    }
+    if (line.startsWith("-")) {
+      const item = line.replace(/^-+\s*/, "").trim();
+      if (!item) continue;
+      if (mode === "next") nextActions.push(item);
+      if (mode === "docs") requiredDocs.push(item);
+    }
+  }
+
   return {
     nextActions: unique(nextActions).slice(0, 8),
     requiredDocs: unique(requiredDocs).slice(0, 12),
